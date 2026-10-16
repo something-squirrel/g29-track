@@ -16,6 +16,7 @@ const SURFACES = {
   curb:     { label: 'Curb',     mu: 0.88, cat: 'paved', rr: 0.016 },
   gravel:   { label: 'Gravel',   mu: 0.6,  cat: 'loose', rr: 0.05 },
   dirt:     { label: 'Dirt',     mu: 0.68, cat: 'loose', rr: 0.03 },
+  hardpack: { label: 'Packed dirt road', mu: 0.92, cat: 'paved', rr: 0.016 },
   sand:     { label: 'Sand',     mu: 0.5,  cat: 'loose', rr: 0.11 },
   rock:     { label: 'Rock',     mu: 0.78, cat: 'loose', rr: 0.022 },
   grass:    { label: 'Grass',    mu: 0.55, cat: 'loose', rr: 0.05 },
@@ -202,8 +203,11 @@ function step(c, s, inp, env, h) {
   // traction control trims torque when a driven axle spins well past road speed
   const spinF = kf > 0 ? s.wf * c.RW - Math.abs(u) : 0, spinR = kf < 1 ? s.wr * c.RW - Math.abs(u) : 0;
   const spinV = Math.max(spinF, spinR);
-  const tcOn = assist.tc && c.tc;
-  const allowed = 0.13 * Math.max(Math.abs(u), 3) + 0.25;   // hold slip ratio near the tire's peak (~0.12)
+  // traction control: level 0 (off) .. 10 (tightest). Level 7 = factory calibration. Every car gets it when a level is set.
+  const lvl = env.tcLevel;
+  const tcOn = lvl != null ? lvl > 0 : (assist.tc && c.tc);
+  const loose = lvl != null && lvl > 0 ? 0.6 + (10 - lvl) * 0.4 / 3 : 1;
+  const allowed = (0.13 * Math.max(Math.abs(u), 3) + 0.25) * loose;   // slip allowed before torque is trimmed
   const tcTarget = !tcOn ? 1 : clamp(1 - (spinV - allowed) / (0.8 + 0.05 * Math.abs(u)), 0.1, 1);
   s.tc += (tcTarget - s.tc) * Math.min(1, h * (tcTarget < s.tc ? 30 : 6));
   s.tcOn = tcOn && s.tc < 0.97;

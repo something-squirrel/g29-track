@@ -31,14 +31,25 @@ function makeCarModel(v, opts = {}) {
   const body = new THREE.Mesh(bodyGeo, paint); grp.add(body);
   const glassMat = new THREE.MeshPhongMaterial({ color: 0x1b242c, shininess: 120, specular: 0x88939c, transparent: !!opts.ghost, opacity: opts.ghost ? 0.3 : 1 });
   const glass = new THREE.Mesh(extrudeProfile(prof.glass, L, H, W + 0.03, 0.02), glassMat); grp.add(glass);
-  const tireMat = new THREE.MeshLambertMaterial({ color: 0x151515, transparent: !!opts.ghost, opacity: opts.ghost ? 0.3 : 1 });
-  const rimMat = new THREE.MeshPhongMaterial({ color: 0xb8bcc0, shininess: 80, transparent: !!opts.ghost, opacity: opts.ghost ? 0.3 : 1 });
-  const tg = new THREE.CylinderGeometry(wr, wr, 0.26, 18); tg.rotateZ(Math.PI / 2);
-  const rg = new THREE.CylinderGeometry(wr * 0.62, wr * 0.62, 0.27, 10); rg.rotateZ(Math.PI / 2);
-  const front = wb / 2 + (v.wheel_offset || 0), wheels = [];
-  for (const [sx, sz] of [[-1, -front], [1, -front], [-1, wb - front], [1, wb - front]]) {
-    const w = new THREE.Group(); w.add(new THREE.Mesh(tg, tireMat), new THREE.Mesh(rg, rimMat));
-    w.position.set(sx * (W / 2 - 0.16), wr, sz); grp.add(w); wheels.push(w);
+  const op = opts.ghost ? { transparent: true, opacity: 0.3 } : {};
+  const tireMat = new THREE.MeshLambertMaterial(Object.assign({ color: 0x1c1c1c }, op));
+  const wallMat = new THREE.MeshLambertMaterial(Object.assign({ color: 0x3a3a3a }, op));
+  const rimMat = new THREE.MeshPhongMaterial(Object.assign({ color: 0xe2e5e8, shininess: 110, specular: 0xffffff }, op));
+  const hubMat = new THREE.MeshPhongMaterial(Object.assign({ color: 0x2a2d30, shininess: 60 }, op));
+  // big, visible wheels: wide tire, sidewall ring, bright 5-spoke rim; they sit partly outside the bodywork
+  const TW2 = 0.38;
+  const tg = new THREE.CylinderGeometry(wr, wr, TW2, 24); tg.rotateZ(Math.PI / 2);
+  const sw = new THREE.TorusGeometry(wr * 0.82, wr * 0.13, 6, 24); sw.rotateY(Math.PI / 2);
+  const rg = new THREE.CylinderGeometry(wr * 0.66, wr * 0.66, TW2 + 0.02, 18); rg.rotateZ(Math.PI / 2);
+  const spoke = new THREE.BoxGeometry(TW2 + 0.05, wr * 1.25, wr * 0.16);
+  const hub = new THREE.CylinderGeometry(wr * 0.18, wr * 0.18, TW2 + 0.08, 10); hub.rotateZ(Math.PI / 2);
+  const front = wb / 2 + (v.wheel_offset || 0), wheels = [], steerers = [];
+  for (const [sx, sz, f] of [[-1, -front, 1], [1, -front, 1], [-1, wb - front, 0], [1, wb - front, 0]]) {
+    const steer = new THREE.Group(), w = new THREE.Group();
+    w.add(new THREE.Mesh(tg, tireMat), new THREE.Mesh(rg, rimMat), new THREE.Mesh(hub, hubMat));
+    for (const so of [-1, 1]) { const s2 = new THREE.Mesh(sw, wallMat); s2.position.x = so * TW2 / 2; w.add(s2); }
+    for (let k = 0; k < 5; k++) { const s = new THREE.Mesh(spoke, hubMat); s.rotation.x = k * Math.PI * 2 / 5; s.scale.set(1, 1, 1); w.add(s); }
+    steer.add(w); steer.position.set(sx * (W / 2 + 0.08), wr, sz); grp.add(steer); wheels.push(w); if (f) steerers.push(steer);
   }
   const lampW = new THREE.MeshBasicMaterial({ color: 0xfff6dc }), lampR = new THREE.MeshBasicMaterial({ color: 0xb01818 });
   const hl = new THREE.BoxGeometry(0.34, 0.1, 0.06);
@@ -66,7 +77,8 @@ function makeCarModel(v, opts = {}) {
       a.needsUpdate = true; bodyGeo.computeVertexNormals();
     },
     repair() { bodyGeo.attributes.position.array.set(orig); bodyGeo.attributes.position.needsUpdate = true; bodyGeo.computeVertexNormals(); },
-    spin(dist) { for (const w of wheels) w.children.forEach(m => { m.rotation.x -= dist / wr; }); },
+    spin(dist) { for (const w of wheels) w.rotation.x -= dist / wr; },
+    steer(a) { for (const s of steerers) s.rotation.y = -a; },
   };
   if (opts.cgFromFront != null) { // put the physics centre of mass at the group origin
     const outer = new THREE.Group(); outer.add(grp); grp.position.z = wb / 2 - opts.cgFromFront; model.group = outer; model.inner = grp;

@@ -13,14 +13,14 @@ const MPH = P.MPH;
 const KEY = 'r29track.v1';
 const DEF = { steerAxis: 0, steerInvert: false, rotation: 900, deadzone: 0.015,
   thr: { axis: 2, rest: 1, pressed: -1 }, brk: { axis: 5, rest: 1, pressed: -1 }, clu: { axis: 1, rest: 1, pressed: -1 },
-  upBtn: 4, downBtn: 5, ebrakeBtn: 7, resetBtn: 0, modeBtn: 3, camBtn: 2, menuBtn: 9,
+  upBtn: 4, downBtn: 5, ebrakeBtn: 7, resetBtn: 0, modeBtn: 3, camBtn: 2, menuBtn: 9, tcUpBtn: 19, tcDownBtn: 20, tc: 7, shiftByCar: {},
   carId: 'vesper-s4', mapId: 'redline', weather: {}, time: {}, traffic: 'map', mode: 'free', laps: 3,
   assist: 'full', shift: 'car', cam: 'cockpit', seat: 0, ghost: 1, mini: 1, qual: 'high', name: '', room: '' };
 let cfg = JSON.parse(JSON.stringify(DEF));
 try { const old = JSON.parse(localStorage.getItem('g29track.v1') || 'null'); if (old) for (const k of ['steerAxis', 'steerInvert', 'rotation', 'thr', 'brk', 'clu', 'upBtn', 'downBtn', 'ebrakeBtn', 'resetBtn']) if (old[k] != null) cfg[k] = old[k]; } catch (e) {}
 try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s) cfg = Object.assign(cfg, s); } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} };
-const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause']];
+const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −']];
 if (!VEH.find(v => v.id === cfg.carId)) cfg.carId = VEH[0].id;
 if (!MAPS.find(m => m.id === cfg.mapId)) cfg.mapId = MAPS[0].id;
 try { const n = localStorage.getItem('g29track.name'); if (n && !cfg.name) cfg.name = n; } catch (e) {}
@@ -89,6 +89,8 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyM') cycleAssist();
   if (e.code === 'KeyC') cycleCam();
   if (e.code === 'KeyT') toggleShift();
+  if (e.code === 'BracketRight' || e.code === 'Equal') tcAdjust(1);
+  if (e.code === 'BracketLeft' || e.code === 'Minus') tcAdjust(-1);
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -126,6 +128,8 @@ function readInput(dt) {
         if (edge(cfg.resetBtn)) resetToRoad();
         if (edge(cfg.modeBtn)) cycleAssist();
         if (edge(cfg.camBtn)) cycleCam();
+        if (edge(cfg.tcUpBtn)) tcAdjust(1);
+        if (edge(cfg.tcDownBtn)) tcAdjust(-1);
         inp.ebrake = !!b[cfg.ebrakeBtn];
       }
     }
@@ -230,7 +234,8 @@ const H = 1 / 1000;
 const carById = id => VEH.find(v => v.id === id) || VEH[0];
 const mapById = id => MAPS.find(m => m.id === id) || MAPS[0];
 const ASSIST = { full: { abs: true, tc: true, esc: true }, sport: { abs: true, tc: true, esc: false }, off: { abs: true, tc: false, esc: false } };
-const autoShiftOn = () => cfg.shift === 'auto' || (cfg.shift === 'car' && car.trans !== 'manual');
+const shiftFor = id => (cfg.shiftByCar || {})[id] || (cfg.shift !== 'car' ? cfg.shift : (carById(id).transmission_type === 'manual' ? 'manual' : 'auto'));
+const autoShiftOn = () => shiftFor(spec.id) === 'auto';
 let paddleHold = 0;
 
 function makeModelFor(sp, opts = {}) {
@@ -321,7 +326,7 @@ function groundEnv() {
   darkness = world.darkAt ? world.darkAt(st.x, st.z, st.y) : 0;
   if (world.ocean && gR.h < -0.6) inWater = Math.max(inWater, -gR.h);
   return { muF, muR, rr, water: Math.min(inWater, 0.9), gx: -9.81 * gradX / n2, gz: -9.81 * gradZ / n2, ny, gH0, gradX, gradZ, x0: st.x, z0: st.z,
-    assist: ASSIST[cfg.assist] || ASSIST.full, mode: cfg.assist, speedCap, ambient: weather.ambient ?? 22, wet, q };
+    assist: ASSIST[cfg.assist] || ASSIST.full, tcLevel: cfg.tc, mode: cfg.assist, speedCap, ambient: weather.ambient ?? 22, wet, q };
 }
 
 function steerAngleFor(inp, sp) {
@@ -340,11 +345,12 @@ function paddle(dir) {
 }
 function cycleAssist() {
   const order = ['full', 'sport', 'off']; cfg.assist = order[(order.indexOf(cfg.assist) + 1) % 3]; save();
-  toast({ full: 'Driver aids: full (ABS, TC, stability)', sport: 'Driver aids: sport (ABS, TC)', off: car.kfDrift != null ? 'Driver aids: off — rear-biased drift split' : 'Driver aids: off (ABS only)' }[cfg.assist]);
+  toast({ full: 'Driver aids: full (ABS, TC, stability)', sport: 'Driver aids: sport (stability off)', off: car.kfDrift != null ? 'Driver aids: off — stability off, rear-biased drift split' : 'Driver aids: off — stability off' }[cfg.assist] + ' · TC is set separately with [ and ]');
 }
 function toggleShift() {
-  cfg.shift = autoShiftOn() ? 'manual' : 'auto'; save(); toast(autoShiftOn() ? 'Automatic shifting' : 'Manual shifting (paddles / arrow keys)');
+  cfg.shiftByCar = cfg.shiftByCar || {}; cfg.shiftByCar[spec.id] = autoShiftOn() ? 'manual' : 'auto'; save(); toast(`${spec.name}: ${autoShiftOn() ? 'automatic' : 'manual (paddles / arrow keys)'}`);
 }
+function tcAdjust(d) { cfg.tc = clamp((cfg.tc ?? 7) + d, 0, 10); save(); toast(cfg.tc === 0 ? 'Traction control OFF' : `Traction control ${cfg.tc}/10${cfg.tc === 7 ? ' (factory)' : cfg.tc > 7 ? ' — more grip, less wheelspin' : ' — more wheelspin allowed'}`, 1.4); if ($('sTc')) $('sTc').value = cfg.tc; }
 function cycleCam() { const o = ['cockpit', 'hood', 'chase']; cfg.cam = o[(o.indexOf(cfg.cam) + 1) % 3]; save(); }
 
 function physicsFrame(dt, inp) {
@@ -390,7 +396,7 @@ function collide(others) {
   const cOff = car.A - car.WB / 2, len = spec.visual.length, wid = spec.visual.width, r = wid / 2;
   const cs = bodyCircles(st.x, st.z, st.h, len, wid, cOff);
   const e = 0.25, fx = Math.sin(st.h), fz = -Math.cos(st.h);
-  const applyImpulse = (cx, cz, nx, nz, pen, m2, v2x, v2z, other) => {
+  const applyImpulse = (cx, cz, nx, nz, pen, m2, v2x, v2z, other, noDmg) => {
     st.x += nx * pen; st.z += nz * pen;
     const ox = cx - st.x, oz = cz - st.z;
     const vpx = st.vx - st.r * oz, vpz = st.vz + st.r * ox;   // velocity of the contact point
@@ -405,7 +411,7 @@ function collide(others) {
     const Jt = clamp(-vt / (1 / car.M + kt * kt / car.IZ + (m2 ? 1 / m2 : 0)), -0.45 * J, 0.45 * J);
     st.vx += Jt * tx / car.M; st.vz += Jt * tz / car.M; st.r += Jt * kt / car.IZ;
     const dv = J / car.M;
-    if (dv > 2.2) damage(dv - 2.2, 0, 0, nx, nz, 'hit', cx - nx * r, cz - nz * r); // dent pushes into the body
+    if (!noDmg && dv > 2.2) damage(dv - 2.2, 0, 0, nx, nz, 'hit', cx - nx * r, cz - nz * r); // walls: dent pushes into the body
     if (other) other.hit = { J, nx, nz };
     return dv;
   };
@@ -430,17 +436,69 @@ function collide(others) {
       applyImpulse(cx - nx * (r - pen), cz - nz * (r - pen), nx, nz, pen, 0, 0, 0, null);
     }
   }
-  // other cars (traffic and online players), 3 circles each
+  // other cars (traffic and online players), 3 circles each.
+  // Damage rule: scales with closing speed. At 100 mph the car that was hit takes 50%, the car that did the hitting 25%.
   for (const o of others) {
     if (Math.abs(o.x - st.x) > 12 || Math.abs(o.z - st.z) > 12) continue;
     if (Math.abs((o.y ?? st.y) - st.y) > 2.5) continue;
     const oc = bodyCircles(o.x, o.z, o.h, o.len || 4.5, o.wid || 1.8, 0), orr = (o.wid || 1.8) / 2;
+    let done = false;
     for (const [cx, cz] of cs) for (const [qx, qz] of oc) {
+      if (done) break;
       const d = Math.hypot(cx - qx, cz - qz); if (d >= r + orr || d < 1e-6) continue;
-      const nx = (cx - qx) / d, nz = (cz - qz) / d;
-      const dv = applyImpulse(cx - nx * r, cz - nz * r, nx, nz, (r + orr - d) * 0.5, o.mass || 1500, o.vx, o.vz, o);
+      const nx = (cx - qx) / d, nz = (cz - qz) / d, pen = (r + orr - d) * 0.5;
+      const closing = -((st.vx - (o.vx || 0)) * nx + (st.vz - (o.vz || 0)) * nz); // m/s, > 0 when approaching
+      const mine = -(st.vx * nx + st.vz * nz), theirs = (o.vx || 0) * nx + (o.vz || 0) * nz;
+      const hitter = mine >= theirs, key = o.key || o;
+      const cool = hitCool.get(key) ?? -1;
+      if (o.remote && !hitter) { // the other driver's game is in charge of this hit: separate now, wait for their message
+        st.x += nx * pen; st.z += nz * pen;
+        if (closing > 1 && now > cool) { hitCool.set(key, now + 0.8); pendingHits.push({ key, at: now + 0.35, o, nx, nz, closing, px: cx - nx * r, pz: cz - nz * r }); }
+        done = true; continue;
+      }
+      const vBefore = [st.vx, st.vz];
+      applyImpulse(cx - nx * r, cz - nz * r, nx, nz, pen, o.mass || 1500, o.vx, o.vz, o, true);
+      if (closing > 1 && now > cool) {
+        hitCool.set(key, now + 0.8);
+        const mph = closing / MPH;
+        carDamage((hitter ? 0.25 : 0.5) * mph / 100, cx - nx * r, cz - nz * r, nx, nz);
+        if (o.remote && net.ready) {
+          const m2 = o.mass || 1500, J = car.M * Math.hypot(st.vx - vBefore[0], st.vz - vBefore[1]);
+          net.ch.send({ type: 'broadcast', event: 'hit', payload: { to: o.key, from: myId, dmg: 0.5 * mph / 100, dvx: -nx * J / m2, dvz: -nz * J / m2, px: cx - nx * r, pz: cz - nz * r } }).catch(() => {});
+        }
+      }
       if (o.onHit && o.hit) { o.onHit(o.hit, car.M); o.hit = null; }
+      done = true;
     }
+  }
+}
+const hitCool = new Map(), pendingHits = [];
+function carDamage(pct, wx, wz, nx, nz) { // pct: 0..1 of total damage
+  if (pct <= 0.002) return;
+  const before = st.damage;
+  st.damage = clamp(st.damage + pct, 0, 1);
+  if (model && wx != null) {
+    const v = new THREE.Vector3(wx, st.y - car.HCG + 0.6, wz); model.inner.worldToLocal(v);
+    const n = new THREE.Vector3(nx, 0, nz).transformDirection(new THREE.Matrix4().extractRotation(model.inner.matrixWorld).invert());
+    model.deform(v.x, v.z, n.x, n.z, Math.min(0.3, pct * 0.8));
+    if (v.z < -0.6) st.pull = clamp(st.pull + Math.sign(v.x || 1) * pct * 0.05, -0.04, 0.04);
+  }
+  if (Math.floor(st.damage * 10) > Math.floor(before * 10) || pct > 0.05) toast(`Hit · +${Math.round(pct * 100)}% damage (${Math.round(st.damage * 100)}%)`);
+  playThump(pct * 60);
+}
+function onHitMsg(m) { // another driver hit us
+  if (!m || m.to !== myId || !Number.isFinite(m.dmg)) return;
+  for (let i = pendingHits.length - 1; i >= 0; i--) if (pendingHits[i].key === m.from) pendingHits.splice(i, 1);
+  st.vx += clamp(+m.dvx || 0, -25, 25); st.vz += clamp(+m.dvz || 0, -25, 25); st.r += (Math.random() - 0.5) * 0.6;
+  const d = Math.hypot(st.x - m.px, st.z - m.pz) || 1;
+  carDamage(clamp(m.dmg, 0, 1), m.px, m.pz, (st.x - m.px) / d, (st.z - m.pz) / d);
+}
+function flushPendingHits() { // no message arrived (both games thought they were hit): apply our own estimate
+  for (let i = pendingHits.length - 1; i >= 0; i--) {
+    const p = pendingHits[i]; if (now < p.at) continue; pendingHits.splice(i, 1);
+    const m2 = p.o.mass || 1500, dv = p.closing * 1.25 * m2 / (car.M + m2);
+    st.vx += p.nx * dv; st.vz += p.nz * dv;
+    carDamage(0.5 * (p.closing / MPH) / 100, p.px, p.pz, p.nx, p.nz);
   }
 }
 
@@ -652,7 +710,7 @@ function driftUpdate(dt) {
   const sp = Math.hypot(st.vx, st.vz);
   const beta = sp > 1 ? Math.atan2(st.vx * Math.cos(st.h) + st.vz * Math.sin(st.h), st.u) : 0;
   st.beta = beta; const bdeg = Math.abs(beta) * 180 / Math.PI;
-  const offRoad = !['Asphalt', 'Concrete', 'Curb'].includes(surfName);
+  const offRoad = !['Asphalt', 'Concrete', 'Curb', 'Packed dirt road'].includes(surfName);
   if (combo > 0 && (offRoad || bdeg > 110)) { flash = 'lost'; flashT = 1.5; combo = 0; comboT = 0; }
   else if (sp > 8 && bdeg > 10 && bdeg < 110 && !offRoad && st.contact) { combo += sp * bdeg * dt * 0.5; comboT = 0.7; }
   else if (comboT > 0) { comboT -= dt; if (comboT <= 0 && combo > 0) { bestDrift = Math.max(bestDrift, Math.round(combo)); flash = 'banked'; flashT = 1.5; banked = Math.round(combo); combo = 0; } }
@@ -673,7 +731,7 @@ function skSeg(a, b) {
 }
 function skids() {
   const sp = Math.hypot(st.vx, st.vz), fx = Math.sin(st.h), fz = -Math.cos(st.h), rx = Math.cos(st.h), rz = Math.sin(st.h);
-  const paved = ['Asphalt', 'Concrete', 'Curb'].includes(surfName);
+  const paved = ['Asphalt', 'Concrete', 'Curb', 'Packed dirt road'].includes(surfName);
   [-1, 1].forEach((s, k) => {
     const p = { x: st.x - fx * car.B + rx * 0.8 * s, z: st.z - fz * car.B + rz * 0.8 * s, y: st.y - car.HCG + 0.05 };
     if (st.slip > 0.2 && sp > 2 && st.contact && paved) {
@@ -701,7 +759,7 @@ function hud(inp, dt) {
   $('shiftMode').textContent = autoShiftOn() ? (paddleHold > 0 ? 'MANUAL' : 'AUTO') : 'MANUAL';
   const as = ASSIST[cfg.assist];
   const lamp = (id, has, on, act) => { const e = $(id); e.classList.toggle('off', !has || !on); e.classList.toggle('on', !!act); };
-  lamp('lABS', car.abs, as.abs, st.absOn); lamp('lTC', car.tc, as.tc, st.tcOn); lamp('lESC', car.esc, as.esc, st.escOn);
+  lamp('lABS', car.abs, as.abs, st.absOn); { const e = $('lTC'); e.textContent = cfg.tc ? 'TC ' + cfg.tc : 'TC OFF'; e.classList.toggle('off', !cfg.tc); e.classList.toggle('on', !!st.tcOn); } lamp('lESC', car.esc, as.esc, st.escOn);
   $('lPIT').hidden = !speedCap; $('lPIT').classList.toggle('on', !!speedCap);
   const deg = inp.wheel ? inp.steer * cfg.rotation / 2 : (lastInp.steerAngle * car.steerRatio / P.D2R);
   wheelRot.setAttribute('transform', `rotate(${deg.toFixed(1)})`);
@@ -941,6 +999,7 @@ function joinNet() {
   ch.on('broadcast', { event: 's' }, msg => onState(msg && msg.payload));
   ch.on('broadcast', { event: 'race' }, msg => onRace(msg && msg.payload));
   ch.on('broadcast', { event: 'fin' }, msg => onFinish(msg && msg.payload));
+  ch.on('broadcast', { event: 'hit' }, msg => onHitMsg(msg && msg.payload));
   ch.on('presence', { event: 'sync' }, renderRoster);
   ch.on('presence', { event: 'leave' }, ({ key: k }) => removeGhost(k));
   ch.subscribe(status => {
@@ -1021,12 +1080,12 @@ function placeModelAndCamera(dt) {
   model.group.position.set(st.x, groundY, st.z);
   eul.set(smPitch + bodyP, -st.h, smRoll + bodyR); model.group.quaternion.setFromEuler(eul);
   const sp = Math.hypot(st.vx, st.vz);
-  model.spin(st.wr * car.RW * dt);
+  model.spin(st.wr * car.RW * dt); model.steer(lastInp.steerAngle || 0);
   const bump = (surfName !== 'Asphalt' && surfName !== 'Concrete' && surfName !== 'Curb') && !reduceMotion ? (Math.random() - 0.5) * Math.min(sp, 20) * 0.003 : 0;
   model.group.visible = cfg.cam !== 'cockpit';
   $('wheel').style.visibility = cfg.cam === 'chase' ? 'hidden' : '';
   if (cfg.cam === 'chase') {
-    const want = v1.set(st.x - fx * 6.8, groundY + 2.5, st.z - fz * 6.8);
+    const want = v1.set(st.x - fx * 7.2, groundY + 3.1, st.z - fz * 7.2);
     if (!chase || chase.distanceTo(want) > 25) chase = want.clone(); else chase.lerp(want, 1 - Math.exp(-dt * 6));
     const gy = world.ground(chase.x, chase.z, chase.y).h; if (chase.y < gy + 1) chase.y = gy + 1;
     cam.position.copy(chase); cam.lookAt(st.x + fx * 3, groundY + 1.0, st.z + fz * 3);
@@ -1060,6 +1119,7 @@ function showMenu(scr) {
   if (scr === 'scrMap') renderMaps();
   if (scr === 'scrSettings') renderSettings();
   if (scr === 'scrLb') renderLbScreen();
+  if (scr === 'scrPause') renderPauseCtl();
   if (scr === 'scrPause') $('pauseSub').textContent = `${mapDef.name} · ${spec.name} · ${weather.label} · ${cfg.mode === 'trial' ? 'Time trial' : 'Free roam'}`;
 }
 function hideMenu() { document.body.classList.remove('inmenu'); paused = false; last = performance.now(); }
@@ -1099,8 +1159,10 @@ function renderCars() {
     <tr><th>0–60 mph target · sim</th><td class="${chk(m.zero_to_sixty_s, v.acceleration_0_60_mph_s, 0.05)}">${v.acceleration_0_60_mph_s} s · ${m.zero_to_sixty_s} s</td></tr>
     <tr><th>Top speed target · sim</th><td class="${chk(m.top_speed_mph, v.top_speed_mph, 0.03)}">${v.top_speed_mph} · ${m.top_speed_mph} mph</td></tr>
     <tr><th>60–0 mph target · sim</th><td class="${chk(m.braking_60_0_ft, v.braking_distance_60_0_ft, 0.03)}">${v.braking_distance_60_0_ft} · ${m.braking_60_0_ft} ft</td></tr>`;
+  $('carShift').value = shiftFor(selCar);
   showroomCar(selCar);
 }
+$('carShift').onchange = e => { cfg.shiftByCar = cfg.shiftByCar || {}; cfg.shiftByCar[selCar] = e.target.value; save(); };
 $('carOk').onclick = () => { cfg.carId = selCar; save(); if (ready) { setCar(selCar, true); loadGhost(); resetRun(); } showMenu(document.body.dataset.from === 'pause' && ready ? 'scrPause' : 'scrMain'); };
 
 function renderMaps() {
@@ -1129,6 +1191,7 @@ $('mapGo').onclick = async () => {
   await loadMap(m.id, { spawn: cfg.mode === 'trial' ? null : +$('oSpawn').value }); hideMenu();
 };
 function renderSettings() {
+  $('sTc').value = cfg.tc; $('sTcV').textContent = cfg.tc ? cfg.tc + '/10' : 'OFF';
   $('sAssist').value = cfg.assist; $('sShift').value = cfg.shift; $('sCam').value = cfg.cam; $('sSeat').value = cfg.seat; $('sGhost').value = String(cfg.ghost); $('sMini').value = String(cfg.mini); $('sQual').value = cfg.qual;
 }
 for (const [id, key, num] of [['sAssist', 'assist'], ['sShift', 'shift'], ['sCam', 'cam'], ['sSeat', 'seat', 1], ['sGhost', 'ghost', 1], ['sMini', 'mini', 1], ['sQual', 'qual']])
@@ -1139,6 +1202,10 @@ function renderLbScreen() {
   renderLb($('lbList'), $('lbMap').value, $('lbCar').value || null);
 }
 $('lbMap').onchange = $('lbCar').onchange = () => renderLb($('lbList'), $('lbMap').value, $('lbCar').value || null);
+$('sTc').oninput = e => { cfg.tc = +e.target.value; save(); $('sTcV').textContent = cfg.tc ? cfg.tc + '/10' : 'OFF'; };
+function renderPauseCtl() { $('pTcV').textContent = cfg.tc ? 'TC ' + cfg.tc : 'TC OFF'; $('pShift').textContent = autoShiftOn() ? 'Gearbox: automatic' : 'Gearbox: manual'; }
+$('pTcDn').onclick = () => { tcAdjust(-1); renderPauseCtl(); }; $('pTcUp').onclick = () => { tcAdjust(1); renderPauseCtl(); };
+$('pShift').onclick = () => { toggleShift(); renderPauseCtl(); };
 $('pResume').onclick = () => hideMenu();
 $('pRestart').onclick = () => { if (race.state) return; placeAt(cfg.mode === 'trial' || mapDef.mode === 'point' ? world.grid[0] : world.spawns[0]); st.damage = 0; st.pull = 0; model.repair(); resetRun(); hideMenu(); };
 $('pReset').onclick = () => { resetToRoad(); hideMenu(); };
@@ -1184,8 +1251,8 @@ function update(dt) {
   const px = st.x, pz = st.z;
   physicsFrame(dt, inp);
   updateTraffic(dt);
-  const others = traffic.list.slice(); for (const [, gh] of ghosts) others.push({ x: gh.x, z: gh.z, y: gh.y + car.HCG, h: gh.h, vx: gh.vx, vz: gh.vz, len: gh.len, wid: gh.wid, mass: gh.mass });
-  collide(others);
+  const others = traffic.list.slice(); for (const [, gh] of ghosts) others.push({ key: gh.id, remote: true, x: gh.x, z: gh.z, y: gh.y + car.HCG, h: gh.h, vx: gh.vx, vz: gh.vz, len: gh.len, wid: gh.wid, mass: gh.mass });
+  collide(others); flushPendingHits();
   if (!frozen) checkGates(px, pz);
   recordGhost(dt); driftUpdate(dt); skids();
   updatePanel(inp.gp); hud(inp, dt); updateAudio(inp); netTick(dt); raceTick();
@@ -1222,7 +1289,6 @@ window.__qa = {
   loadMap: async (id, o = {}) => { if (o.weather) cfg.weather[id] = o.weather; if (o.time) cfg.time[id] = o.time; if (o.car) cfg.carId = o.car; if (o.mode) cfg.mode = o.mode; if (o.traffic != null) cfg.traffic = o.traffic; await loadMap(id, o); hideMenu(); return window.__qa.snap(); },
   snap: () => ({ map: mapDef && mapDef.id, car: spec.id, x: st.x, y: st.y, z: st.z, h: st.h, mph: Math.hypot(st.vx, st.vz) / MPH, gear: st.gear, rpm: st.we * P.RPM, surf: surfName, contact: st.contact, damage: st.damage,
     tempF: st.tempF, tempR: st.tempR, cp: run.cp, started: run.started, laps: run.laps, lastLap: run.lastLap, traffic: traffic.list.length, tiles: world && world.tiles ? world.tiles.tiles.size : 0, water: inWater, cap: speedCap, abs: st.absOn, esc: st.escOn, tc: st.tcOn, frozen, cam: cfg.cam }),
-  mm: () => { mmT = 0; minimap2(0.01); const d = mctx.getImageData(180, 180, 1, 1).data; return [Array.from(d), mm.hidden, cfg.mini, mmT]; },
   input: o => { qaInput = o; }, cam: c => { cfg.cam = c; }, auto: mph => { qaAuto = (mph || 0) * MPH; },
   place: sp => { placeAt(sp); return window.__qa.snap(); },
   world: () => world, run: () => run, hour: h => { hour = h; },

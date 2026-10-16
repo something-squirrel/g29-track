@@ -59,15 +59,15 @@ function genCircuit(W, map) {
   W.base = (x, z) => 100 + 6 * N.fbm(x / 600, z / 600, 3) + 1.5 * N.fbm(x / 90, z / 90, 2);
   r.out = cornerSides(r);
   // pit lane: parallel road on the infield side of the main straight
-  const sEntry = r.len - 430, sExit = 360, pitPts = [], pitY = [];
+  const PR = g.pitRamp || 100, sEntry = r.len - (g.pitIn || 430), sExit = g.pitOut || 360, pitPts = [], pitY = [];
   for (let s = sEntry; s <= r.len + sExit; s += 2) {
-    const i = Math.round((s % r.len) / (r.len / r.n)) % r.n, off = g.pitOffset * smooth(sEntry, sEntry + 170, s) * (1 - smooth(r.len + sExit - 170, r.len + sExit, s));
+    const i = Math.round((s % r.len) / (r.len / r.n)) % r.n, off = g.pitOffset * smooth(sEntry, sEntry + PR, s) * (1 - smooth(r.len + sExit - PR, r.len + sExit, s));
     const [rx, rz] = rv(r, i); pitPts.push([r.x[i] + rx * off, r.z[i] + rz * off]); pitY.push(r.y[i]);
   }
   const pit = W.addRoad(makeRoad('pit', pitPts, { width: 9, shoulder: 0.5, laneW: 4.5, kind: 'pit', markings: 'pit', shoulderSurface: 'concrete' }), 9 / 2 + 0.5 + 20);
   for (let i = 0; i < pit.n; i++) pit.y[i] = pitY[i];
   W.pit = pit;
-  W.speedCapAt = (q) => q && q.road === pit && q.s > 170 && q.s < pit.len - 170 ? g.pitLimitMs : 0;
+  W.speedCapAt = (q) => q && q.road === pit && q.s > PR && q.s < pit.len - PR ? g.pitLimitMs : 0;
   W.offSurface = (x, z, h, q) => {
     if (q && q.road === r) { const edge = r.width / 2 + r.shoulder, o = r.out[q.i]; if (o && Math.sign(q.lat) === o && q.d < edge + 28) return 'gravel'; }
     return 'grass';
@@ -86,16 +86,19 @@ function genCircuit(W, map) {
   roadMesh(W, pit, { y: 0.035 }); markings(W, pit, 'pit');
   shoulders(W, pit, C(0.62, 0.62, 0.6));
   // pit wall between pit lane and track, garages beyond the pit lane, grandstands opposite
-  const ie = Math.round((sEntry + 190) / (r.len / r.n)), ix = Math.round((sExit - 190) / (r.len / r.n)) + r.n;
+  const ie = Math.round((sEntry + PR + 20) / (r.len / r.n)), ix = Math.round((sExit - PR - 20) / (r.len / r.n)) + r.n;
   vertWall(W, r, ie, ix, r.width / 2 + 3, 1.1, C(0.82, 0.82, 0.8));
   const gar = new THREE.MeshLambertMaterial({ color: 0xd9dcdf }), dark = new THREE.MeshLambertMaterial({ color: 0x30363c });
-  for (let s = 200; s < pit.len - 200; s += 15) {
-    const i = Math.round(s / (pit.len / pit.n)), [rx, rz] = rv(pit, i), o = pit.width / 2 + 4, cx = pit.x[i] + rx * (o + 6), cz = pit.z[i] + rz * (o + 6);
+  for (let s = PR + 70; s < pit.len - PR - 70; s += 15) {
+    const i = Math.round(s / (pit.len / pit.n)), [rx, rz] = rv(pit, i), o = pit.width / 2 + 7, cx = pit.x[i] + rx * (o + 6), cz = pit.z[i] + rz * (o + 6);
+    let clear = true; // never let a garage box overlap the pit lane or the track
+    for (const rd of [pit, r]) for (let k = 0; k < rd.n; k += 2) if (rd.x[k] > cx - 6 - rd.width / 2 - 3 && rd.x[k] < cx + 6 + rd.width / 2 + 3 && rd.z[k] > cz - 6 - rd.width / 2 - 3 && rd.z[k] < cz + 6 + rd.width / 2 + 3) { clear = false; break; }
+    if (!clear) continue;
     boxMesh(W, cx - 6.5, cz - 6, cx + 6.5, cz + 6, pit.y[i], pit.y[i] + 6, gar);
     boxMesh(W, cx - 5.5, cz - 6.05, cx + 5.5, cz - 5.9, pit.y[i], pit.y[i] + 4.2, dark);
     W.cols.box(cx - 6.5, cz - 6, cx + 6.5, cz + 6, { kind: 'building' });
   }
-  for (let s = 60; s < 520; s += 30) {
+  for (let s = 60; s < Math.min(520, g.pitOut + 100); s += 30) {
     const i = Math.round(s / (r.len / r.n)), [rx, rz] = rv(r, i), cx = r.x[i] - rx * (r.width / 2 + 24), cz = r.z[i] - rz * (r.width / 2 + 24);
     for (let t = 0; t < 4; t++) boxMesh(W, cx - 14, cz - 4 - t * 3, cx + 14, cz - 1 - t * 3, r.y[i], r.y[i] + 1.5 + t * 2, new THREE.MeshLambertMaterial({ color: t % 2 ? 0xc33a2e : 0x9aa2aa }));
     W.cols.box(cx - 14, cz - 16, cx + 14, cz - 1, { kind: 'building' });
@@ -171,28 +174,37 @@ function genTestTrack(W, map) {
 }
 
 /* =================== Redstone Desert =================== */
+function trailMat() { // packed dirt road: darker compacted center, two worn tire tracks, light gravel edges
+  const c = document.createElement('canvas'); c.width = 128; c.height = 256; const x = c.getContext('2d');
+  x.fillStyle = '#7a5a40'; x.fillRect(0, 0, 128, 256);
+  x.fillStyle = '#b79a77'; x.fillRect(0, 0, 10, 256); x.fillRect(118, 0, 10, 256);
+  x.fillStyle = '#5f452f'; x.fillRect(28, 0, 18, 256); x.fillRect(82, 0, 18, 256);
+  const r = rng(77); for (let i = 0; i < 2500; i++) { x.fillStyle = ['#6d503a', '#8a6a4e', '#5a4130', '#9a7b5c'][i % 4]; x.fillRect(r() * 128, r() * 256, 2, 2); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return new THREE.MeshLambertMaterial({ map: t, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+}
 function genDesert(W, map) {
   const g = map.gen, N = W.noise, half = g.half;
   const washX = z => -300 + 650 * Math.sin(z / 1700) + 180 * Math.sin(z / 600 + 1);
   const washD = (x, z) => { const d = 650 / 1700 * Math.cos(z / 1700) + 180 / 600 * Math.cos(z / 600 + 1); return Math.abs(x - washX(z)) / Math.sqrt(1 + d * d); };
-  const duneM = (x, z) => smooth(0.05, 0.35, N.fbm(x / 3200 + 5, z / 3200 - 3, 2));
-  const mesaN = (x, z) => N.fbm(x / 1400 + 11, z / 1400 + 7, 3);
+  const duneM = (x, z) => smooth(0.05, 0.35, N.fbm(x / 1600 + 5, z / 1600 - 3, 2));
+  const mesaN = (x, z) => N.fbm(x / 700 + 11, z / 700 + 7, 3);
   W.base = (x, z) => {
     let h = 640 + 55 * N.fbm(x / 2400, z / 2400, 3) + 10 * N.fbm(x / 380, z / 380, 3);
     const dm = duneM(x, z); if (dm > 0) { const rr = 0.5 + 0.5 * Math.sin((x * 0.8 + z * 0.6) / 70 + 2.5 * N.fbm(x / 500, z / 500, 2)); h += dm * 17 * rr * rr; }
     h += smooth(0.3, 0.36, mesaN(x, z)) * (75 + 25 * N.fbm(x / 700, z / 700, 2));
     h -= 7 * smooth(48, 12, washD(x, z));
-    h += 520 * smooth(half - 900, half, Math.max(Math.abs(x), Math.abs(z)));
+    h += 420 * smooth(half - 550, half, Math.max(Math.abs(x), Math.abs(z)));
     return h;
   };
   W.blendCut = 12; W.blendFill = 16;
-  const pts = sampleSpline(g.trail, true, 3);
-  const r = W.mainRoad = W.addRoad(makeRoad('trail', pts, { closed: true, width: 7, shoulder: 1, surface: 'dirt', shoulderSurface: 'gravel', markings: 'none', kind: 'trail' }), 3.5 + 1 + 20);
+  const pts = sampleSpline(g.trail.map(p => [p[0] * (g.trailScale || 1), p[1] * (g.trailScale || 1)]), true, 3);
+  const r = W.mainRoad = W.addRoad(makeRoad('trail', pts, { closed: true, width: 9, shoulder: 1.5, surface: 'hardpack', shoulderSurface: 'gravel', markings: 'none', kind: 'trail' }), 4.5 + 1.5 + 20);
   for (let i = 0; i < r.n; i++) r.y[i] = W.base(r.x[i], r.z[i]);
-  smoothProfile(r, 7, 0.32);
-  r.bump = s => 0.045 * Math.sin(s * 7.0) + 0.08 * N.n2(s / 3.1, 3.3); // washboard and ruts (felt through the suspension)
+  smoothProfile(r, 15, 0.16);
+  r.bump = s => 0.008 * Math.sin(s * 7.0) + 0.02 * N.n2(s / 3.1, 3.3); // light washboard, felt through the suspension
   let lastPool = -1e9;
-  for (let i = 0; i < r.n; i += 2) if (washD(r.x[i], r.z[i]) < 10 && r.s[i] - lastPool > 200) { W.pools.push({ x: r.x[i], z: r.z[i], r: 26, level: r.y[i] + 0.45 }); lastPool = r.s[i]; }
+  for (let i = 0; i < r.n; i += 2) if (washD(r.x[i], r.z[i]) < 10 && r.s[i] - lastPool > 200) { W.pools.push({ x: r.x[i], z: r.z[i], r: 22, level: r.y[i] + 0.25 }); lastPool = r.s[i]; }
   W.offSurface = (x, z, h) => { if (washD(x, z) < 30) return 'sand'; if (duneM(x, z) > 0.45) return 'sand'; if (mesaN(x, z) > 0.3) return 'rock'; return N.n2(x / 150, z / 150) > 0.25 ? 'dirt' : 'gravel'; };
   W.colorAt = (x, z, h, q, c, slope) => {
     const t = 0.5 + 0.5 * N.n2(x / 60, z / 60), wd = washD(x, z);
@@ -200,11 +212,11 @@ function genDesert(W, map) {
     else if (wd < 34) c.setRGB(0.86, 0.76, 0.6);
     else if (duneM(x, z) > 0.4) c.setRGB(0.88 + 0.04 * t, 0.7 + 0.04 * t, 0.5);
     else c.setRGB(0.68 + 0.06 * t, 0.53 + 0.05 * t, 0.4);
-    if (q && q.d < q.road.width / 2 + q.road.shoulder + 1) c.setRGB(0.6, 0.47, 0.34);
+    if (q && q.d < q.road.width / 2 + q.road.shoulder + 1) c.setRGB(0.5, 0.38, 0.28);
   };
   stdMats(W);
   W.tiles = makeTiles(W, { detail: tex.detail(), radius: 1500 });
-  roadMesh(W, r, { mat: W.mats.dirt, extra: 0.6, y: 0.06 });
+  roadMesh(W, r, { mat: trailMat(), extra: 0.4, y: 0.06, vScale: 8 });
   for (const p of W.pools) { const m = new THREE.Mesh(new THREE.CircleGeometry(p.r, 32), new THREE.MeshPhongMaterial({ color: 0x4b6f78, transparent: true, opacity: 0.78, shininess: 80 })); m.rotation.x = -Math.PI / 2; m.position.set(p.x, p.level, p.z); W.group.add(m); }
   const rnd = W.rand, rocks = [], cacti = [], shrubs = [];
   for (let x = -half + 300; x < half - 300; x += 46) for (let z = -half + 300; z < half - 300; z += 46) {
@@ -221,7 +233,7 @@ function genDesert(W, map) {
   for (const t of cacti) W.cols.circ(t[0], t[2], 0.35, { kind: 'pole' });
   const sg = new THREE.DodecahedronGeometry(0.8, 0); sg.scale(1, 0.55, 1);
   instanced(W, sg, new THREE.MeshLambertMaterial({ color: 0x7d7a52, flatShading: true }), shrubs);
-  const B = half - 450; for (const [ax, az, bx, bz] of [[-B, -B, B, -B], [B, -B, B, B], [B, B, -B, B], [-B, B, -B, -B]]) W.cols.seg(ax, az, bx, bz, { kind: 'wall' });
+  const B = half - 400; for (const [ax, az, bx, bz] of [[-B, -B, B, -B], [B, -B, B, B], [B, B, -B, B], [-B, B, -B, -B]]) W.cols.seg(ax, az, bx, bz, { kind: 'wall' });
   routeCheckpoints(W, r, map.checkpoints.every_km * 1000, true, map.checkpoints.laps);
   W.spawns = map.spawn_points.map(sp => spawnOn(r, sp.km * 1000, 0, sp.label));
   W.grid = Array.from({ length: 12 }, (_, k) => spawnOn(r, r.len - 14 - k * 9, (k % 2 ? -1 : 1) * 1.8, 'Grid ' + (k + 1)));
@@ -234,13 +246,13 @@ function genCity(W, map) {
   const g = map.gen, half = g.half, B = g.block, K = Math.round(half / B), rnd = W.rand;
   const isAve = k => ((k % g.avenueEvery) + g.avenueEvery) % g.avenueEvery === 0;
   const hwOf = k => isAve(k) ? 7.5 : 6;
-  const PL = { x0: -200, x1: 200, z0: -1400, z1: -600 };
+  const PL = g.plaza || { x0: -200, x1: 200, z0: -1400, z1: -600 };
   const removedEW = (kz, x) => kz * B > PL.z0 && kz * B < PL.z1 && x > PL.x0 + 6 && x < PL.x1 - 6;
   W.flat = true; W.base = () => 0; W.city = { B, K, hwOf, isAve, PL, half };
   const parks = new Set(), garageBlocks = [[1, 1], [-3, 2]];
   for (let bx = -K; bx < K; bx++) for (let bz = -K; bz < K; bz++) if (rnd() < 0.07) parks.add(bx + ',' + bz);
   for (const [a, b] of garageBlocks) parks.delete(a + ',' + b);
-  const plazaBlock = (bx, bz) => bx >= -1 && bx <= 0 && bz >= -7 && bz <= -4;
+  const plazaBlock = (bx, bz) => bx * B >= PL.x0 && (bx + 1) * B <= PL.x1 && bz * B >= PL.z0 && (bz + 1) * B <= PL.z1;
   W.cityGround = (x, z) => {
     const kx = Math.round(x / B), kz = Math.round(z / B), dx = Math.abs(x - kx * B), dz = Math.abs(z - kz * B);
     const onNS = Math.abs(kx) <= K && dx < hwOf(kx) && Math.abs(z) <= half + 6;
@@ -446,7 +458,7 @@ function genCity(W, map) {
   }
   W.checkpoints = cps; W.laps = map.checkpoints.laps || 1;
   W.spawns = map.spawn_points.map(sp => sp.garage != null ? { x: W.garages[sp.garage].entrance[0], z: Math.floor(W.garages[sp.garage].Z0 / B) * B - 2, y: 0, h: Math.PI, label: sp.label } : { x: sp.x, z: sp.z, y: 0, h: sp.h, label: sp.label });
-  W.grid = Array.from({ length: 12 }, (_, k) => ({ x: 1.75 + (k % 2) * 3.5, z: 1000 + 30 + Math.floor(k / 2) * 9, y: 0, h: 0, label: 'Grid ' + (k + 1) }));
+  W.grid = Array.from({ length: 12 }, (_, k) => ({ x: 1.75 + (k % 2) * 3.5, z: map.checkpoints.route[0][1] + 30 + Math.floor(k / 2) * 9, y: 0, h: 0, label: 'Grid ' + (k + 1) }));
   const Bd = half + 60; for (const [ax, az, bx, bz] of [[-Bd, -Bd, Bd, -Bd], [Bd, -Bd, Bd, Bd], [Bd, Bd, -Bd, Bd], [-Bd, Bd, -Bd, -Bd]]) W.cols.seg(ax, az, bx, bz, { kind: 'wall' });
   W.outOfBounds = () => false;
 }

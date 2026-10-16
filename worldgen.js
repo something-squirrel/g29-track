@@ -250,12 +250,12 @@ function genCoast(W, map) {
   };
   W.blendCut = 16; W.blendFill = 26; W.ocean = true; W.seaLevel = 0;
   const pts = []; let z = 150, acc = 0, prev = null;
-  while (acc < 34500) {
+  while (acc < g.length + 2500) {
     const amp = 46 * smooth(-0.15, 0.45, N.fbm(z / 2600 + 4, 1.7, 2));
     const x = coastX(z) + g.inset + amp * Math.sin(z / 72 + 0.6) + 26 * Math.sin(z / 260 + 2) + 14 * N.n2(z / 330, 9.1);
     if (prev) acc += Math.hypot(x - prev[0], z - prev[1]); pts.push([x, z]); prev = [x, z]; z -= 36;
   }
-  const s = sampleSpline(pts, false, 3).slice(0, Math.round(32000 / 3) + 1);
+  const s = sampleSpline(pts, false, 3).slice(0, Math.round(g.length / 3) + 1);
   const r = W.mainRoad = W.addRoad(makeRoad('main', s, { width: 7.2, shoulder: 1.4, laneW: 3.6, markings: 'two-lane' }), 7.2 / 2 + 1.4 + 34);
   for (let i = 0; i < r.n; i++) r.y[i] = W.base(r.x[i], r.z[i]);
   smoothProfile(r, 30, 0.075, 14);
@@ -307,12 +307,12 @@ function genMountain(W, map) {
   }
   go(g.leg * 0.5, () => 0, g.grade);
   turnTo(0, 110, 0.07);
-  go(2300, s => Math.sin(s / 280) / 260 + Math.sin(s / 90 + 2) / 800, 0.085);
-  const rem = 18000 - P.length * 3, curvy = s => Math.sin(s / 240 + 1) / 230 + Math.sin(s / 75) / 600;
+  go(g.upper, s => Math.sin(s / 280) / 260 + Math.sin(s / 90 + 2) / 800, 0.085);
+  const rem = g.length - P.length * 3, curvy = s => Math.sin(s / 240 + 1) / 230 + Math.sin(s / 75) / 600;
   const pair = (d) => { go(g.radius * Math.PI, () => d / g.radius, -0.05); go(170, () => 0, -0.07); go(g.radius * Math.PI, () => -d / g.radius, -0.05); };
   go(rem * 0.28, curvy, -0.065); pair(1); go(rem * 0.3, curvy, -0.065); pair(-1);
-  go(18000 - P.length * 3 + 30, curvy, -0.06);
-  const n = Math.round(18000 / 3) + 1;
+  go(g.length - P.length * 3 + 30, curvy, -0.06);
+  const n = Math.round(g.length / 3) + 1;
   const pts = P.slice(0, n);
   const r = W.mainRoad = W.addRoad(makeRoad('main', pts, { width: 5.8, shoulder: 0.6, laneW: 2.9, markings: 'two-lane' }), 115);
   for (let i = 0; i < r.n; i++) r.y[i] = Y[i];

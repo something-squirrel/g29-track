@@ -212,7 +212,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
   </section>
   <section><h3>Button binds</h3><div class="map" id="binds"></div></section>
   <p class="note">To bind, click Bind and press the wheel button you want. To detect a pedal, click Detect, then press that pedal all the way and let go within 3 seconds.</p>
-  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto-shift, <kbd>C</kbd> camera, <kbd>R</kbd> reset to road, <kbd>Esc</kbd> menu.</p>
+  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto/manual, <kbd>[</kbd><kbd>]</kbd> traction control, <kbd>C</kbd> camera, <kbd>R</kbd> reset to road, <kbd>Esc</kbd> menu.</p>
   <button type="button" id="closeSetup">Close</button>
 </aside>
 
@@ -271,6 +271,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
       <p class="sub">Spec targets with what the physics test bench measured (flat dry asphalt, warm tires).</p>
       <div class="cards" id="carCards"></div>
       <table class="spec" id="carSpec"></table>
+      <div class="opts"><label for="carShift">Gearbox</label><select id="carShift"><option value="auto">Automatic</option><option value="manual">Manual (paddles / arrow keys)</option></select></div>
       <div class="foot"><button type="button" class="primary" id="carOk">Select car</button><button type="button" class="back">Back</button></div>
     </section>
 
@@ -297,6 +298,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
       <div class="opts">
         <label for="sAssist">Driver aids</label><select id="sAssist"><option value="full">Full (ABS, TC, stability)</option><option value="sport">Sport (ABS, TC)</option><option value="off">Off (ABS only, AWD drift split)</option></select>
         <label for="sShift">Shifting</label><select id="sShift"><option value="car">Car default</option><option value="auto">Always automatic</option><option value="manual">Always manual (paddles)</option></select>
+        <label for="sTc">Traction control</label><span class="row" style="margin:0"><input type="range" id="sTc" min="0" max="10" step="1"><b id="sTcV" style="font-family:var(--mono)"></b></span>
         <label for="sCam">Camera</label><select id="sCam"><option value="cockpit">Cockpit</option><option value="hood">Hood</option><option value="chase">Chase</option></select>
         <label for="sSeat">Seat height</label><input type="range" id="sSeat" min="-0.2" max="0.4" step="0.02">
         <label for="sGhost">Ghost</label><select id="sGhost"><option value="1">Show my best-lap ghost</option><option value="0">Hide</option></select>
@@ -318,6 +320,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
       <p class="sub" id="pauseSub"></p>
       <div class="mbtns">
         <button type="button" class="primary" id="pResume">Resume</button>
+        <div class="row" style="margin:0"><button type="button" id="pTcDn">TC −</button><b id="pTcV" style="font-family:var(--mono);min-width:7ch;text-align:center"></b><button type="button" id="pTcUp">TC +</button><button type="button" id="pShift"></button></div>
         <button type="button" id="pRestart">Restart run<small>Back to the start, timer reset</small></button>
         <button type="button" id="pReset">Reset to road<small>Nearest road position</small></button>
         <button type="button" id="pRepair">Repair car<small>Fixes damage (invalidates the lap)</small></button>
