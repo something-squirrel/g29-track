@@ -8,6 +8,7 @@
 const G = 9.81, RHO = 1.225, RPM = 60 / (2 * Math.PI), D2R = Math.PI / 180;
 const MPH = 0.44704, HP = 745.7, FT = 0.3048;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const ACCEL_SCALE = 1.2; // game-wide: every car accelerates 1.2x harder than its real-world spec (set in step)
 
 /* Surfaces: base friction (relative to dry asphalt), category and rolling resistance coefficient. */
 const SURFACES = {
@@ -284,7 +285,9 @@ function step(c, s, inp, env, h) {
   const roll = (env.rr || 0.012) * Fz * Math.min(1, Math.abs(u) / 0.5) * sgnU;
   const FxT = Fxf + FxR, FyT = Fyf + FyR;
   const gxB = (env.gx || 0) * fx + (env.gz || 0) * fz, gyB = (env.gx || 0) * rx + (env.gz || 0) * rz;
-  const Fx = FxT - roll + escFx * sgnU + c.M * gxB, Fy = FyT + c.M * gyB;
+  // acceleration boost: while on the throttle (not braking), the tires' forward drive force counts 1.2x
+  const accelK = (root.R29_ACCEL ?? ACCEL_SCALE) - 1, bonus = thr > 0.02 && inp.brk < 0.05 && u > -0.5 ? accelK * Math.max(0, FxT) : 0;
+  const Fx = FxT + bonus - roll + escFx * sgnU + c.M * gxB, Fy = FyT + c.M * gyB;
   const Tz = c.A * Fyf - c.B * FyR + escMz;
   const drag = 0.5 * RHO * c.CdA * sp + (env.water ? 140 * env.water * c.TW * sp : 0);
   s.vx += ((fx * Fx + rx * Fy) / c.M - drag * s.vx / c.M) * h;

@@ -56,6 +56,14 @@ body.inmenu .hud{opacity:0;pointer-events:none}
 #countdown{position:fixed;inset:0;display:grid;place-items:center;pointer-events:none;font-size:clamp(80px,18vw,180px);font-weight:700;color:var(--accent);text-shadow:0 6px 24px rgba(0,0,0,.6)}
 #countdown.go{color:var(--go)}
 #kart{position:fixed;bottom:calc(150px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);display:flex;gap:10px;align-items:center;font-weight:700;letter-spacing:.14em;font-size:15px;text-shadow:0 2px 8px rgba(0,0,0,.7);pointer-events:none}
+#pow{position:fixed;top:calc(56px + env(safe-area-inset-top,0px));right:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-end;pointer-events:none}
+#pow .slot{min-width:118px;padding:8px 12px;border-radius:6px;background:rgba(10,14,18,.72);border:2px solid rgba(255,255,255,.18);font-weight:700;letter-spacing:.12em;text-align:center}
+#pow .slot small,#pow .nitro small{font-weight:600;opacity:.6;margin-left:6px;font-size:11px}
+#pow .slot.turbo{border-color:#ff8a1f;color:#ffb35c} #pow .slot.bouncer{border-color:#2fc24a;color:#6fe08a}
+#pow .nitro{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.12em;background:rgba(10,14,18,.72);padding:6px 10px;border-radius:6px}
+#pow .nbar{width:90px;height:8px;border-radius:4px;background:rgba(255,255,255,.15);overflow:hidden}
+#pow #nitroF{height:100%;background:#3fb4ff;width:100%}
+#pow.ready #nitroF{background:#5ef2ff;box-shadow:0 0 8px #5ef2ff}
 #kart .pips{display:flex;gap:4px}
 #kart .pips i{width:22px;height:8px;border-radius:2px;background:rgba(255,255,255,.18)}
 #kart.boost{font-size:22px;color:#ffd23a}
@@ -192,6 +200,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
 </div>
 <div id="banner" class="hud" hidden>OFF TRACK</div>
 <div id="drift" class="hud" hidden><span class="big" id="dScore">0</span><span class="sub" id="dSub">DRIFT</span></div>
+<div id="pow" class="hud"><div class="slot" id="itemSlot"><span id="itemName">—</span><small>E</small></div><div class="nitro"><span>NITRO<small>N</small></span><div class="nbar"><div id="nitroF"></div></div></div></div>
 <div id="kart" class="hud" hidden><span id="kTxt">DRIFT</span><span class="pips"><i></i><i></i><i></i></span></div>
 <div id="toast" class="hud" hidden></div>
 <div id="countdown" hidden></div>
@@ -221,7 +230,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
   </section>
   <section><h3>Button binds</h3><div class="map" id="binds"></div></section>
   <p class="note">To bind, click Bind and press the wheel button you want. To detect a pedal, click Detect, then press that pedal all the way and let go within 3 seconds.</p>
-  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto/manual, <kbd>[</kbd><kbd>]</kbd> traction control, <kbd>C</kbd> camera, <kbd>R</kbd> reset to road, <kbd>Shift</kbd> kart drift (hold), <kbd>K</kbd> kart drift on/off, <kbd>Esc</kbd> menu.</p>
+  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto/manual, <kbd>[</kbd><kbd>]</kbd> traction control, <kbd>C</kbd> camera, <kbd>R</kbd> reset to road, <kbd>Shift</kbd> kart drift (hold), <kbd>N</kbd> nitro, <kbd>E</kbd> use item, <kbd>K</kbd> kart drift on/off, <kbd>Esc</kbd> menu.</p>
   <button type="button" id="closeSetup">Close</button>
 </aside>
 

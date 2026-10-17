@@ -678,10 +678,109 @@ function genOval(W, map) {
   W.outOfBounds = (x, z, q) => !q || q.d > hw + 12;
 }
 
+/* =================== Palm Shore Loop =================== */
+// Packed-sand road around a bay: a long straight right along the beach with the sea on the right-hand side,
+// then up through palm groves and grassy hills and back down to the sand.
+function mergeGeos(list) {
+  const parts = list.map(g => g.index ? g.toNonIndexed() : g);
+  let n = 0; for (const p of parts) n += p.attributes.position.count;
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3); let o = 0;
+  for (const p of parts) { if (!p.attributes.normal) p.computeVertexNormals(); pos.set(p.attributes.position.array, o * 3); nor.set(p.attributes.normal.array, o * 3); o += p.attributes.position.count; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); return g;
+}
+function sandRoadMat() {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 256; const x = c.getContext('2d');
+  x.fillStyle = '#b98c56'; x.fillRect(0, 0, 128, 256);
+  x.fillStyle = '#a57a48'; x.fillRect(22, 0, 16, 256); x.fillRect(90, 0, 16, 256);
+  x.fillStyle = '#e8d3a4'; x.fillRect(0, 0, 6, 256); x.fillRect(122, 0, 6, 256);
+  const rr = rng(5); for (let i = 0; i < 2600; i++) { x.fillStyle = ['#ad8150', '#c49a64', '#9e7444', '#cfa978'][i % 4]; x.fillRect(rr() * 128, rr() * 256, 2, 2); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return new THREE.MeshLambertMaterial({ map: t, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+}
+function genBeach(W, map) {
+  const g = map.gen, N = W.noise, rnd = W.rand;
+  const shoreZ = x => 287 + 4 * Math.sin(x / 90) + 3 * Math.sin(x / 37 + 1);
+  W.base = (x, z) => {
+    const d = shoreZ(x) - z; // metres inland from the shore line
+    if (d < 0) return Math.max(-14, -0.4 + d * 0.06);
+    if (d < 60) return -0.4 + d * 0.045;
+    return 2.3 + (d - 60) * 0.02 + 20 * smooth(140, 480, d) * (0.55 + 0.45 * N.fbm(x / 420, z / 420, 3)) + 2.5 * N.fbm(x / 120, z / 120, 2) * smooth(60, 120, d);
+  };
+  W.blendCut = 14; W.blendFill = 22; W.ocean = true; W.seaLevel = 0;
+  const pts = sampleSpline(g.ctrl, true, 2);
+  const r = W.mainRoad = W.addRoad(makeRoad('main', pts, { closed: true, width: 12, shoulder: 1.2, laneW: 6, surface: 'hardpack', shoulderSurface: 'sand', markings: 'none' }), 6 + 1.2 + 30);
+  for (let i = 0; i < r.n; i++) r.y[i] = Math.max(1.1, W.base(r.x[i], r.z[i]));
+  smoothProfile(r, 16, 0.07, 1.1);
+  W.offSurface = (x, z, h) => { const d = shoreZ(x) - z; return h < -0.2 ? 'water' : d < 120 ? 'sand' : 'grass'; };
+  W.shoulderSurface = () => 'sand';
+  W.colorAt = (x, z, h, q, c) => {
+    const d = shoreZ(x) - z, t = 0.5 + 0.5 * N.n2(x / 50, z / 50);
+    if (h < 0.05) c.setRGB(0.62, 0.55, 0.4);                       // wet sand / sea floor
+    else if (d < 16) c.setRGB(0.72 + 0.04 * t, 0.63, 0.46);
+    else if (d < 110) c.setRGB(0.86, 0.77 + 0.03 * t, 0.56);
+    else { const k = smooth(110, 170, d); c.setRGB(lerp(0.86, 0.36 + 0.06 * t, k), lerp(0.77, 0.6 + 0.06 * t, k), lerp(0.56, 0.28, k)); }
+  };
+  stdMats(W);
+  W.tiles = makeTiles(W, { detail: tex.detail(), radius: 1500 });
+  W.tiles.allowNear([r], 750);
+  roadMesh(W, r, { mat: sandRoadMat(), vScale: 14 });
+  Gn.oceanPlane(W);
+  if (W.oceanMesh) W.oceanMesh.material.color.setHex(0x2a8fb8);
+  // surf line: a foam ribbon that washes up and down the sand
+  const fp = [], fi = [];
+  for (let x = -1600, k = 0; x <= 1600; x += 8, k++) { const zc = shoreZ(x) - 8.9; fp.push(x, 0.05, zc - 1.6, x, 0.05, zc + 1.6); if (x < 1600) { const a = k * 2; fi.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); } }
+  const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3)); fg.setIndex(fi); fg.computeVertexNormals();
+  const foam = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }));
+  W.group.add(foam);
+  W.update = t => { foam.position.z = Math.sin(t * 0.9) * 2.2; foam.material.opacity = 0.45 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.9 + 1)); };
+  // palms (curved trunk + drooping fronds), beach umbrellas, rocks in the surf
+  const trunkParts = []; for (let k = 0; k < 4; k++) { const c2 = new THREE.CylinderGeometry(0.22 - k * 0.02, 0.3 - k * 0.02, 2.2, 7); c2.translate(k * 0.35, 1.1 + k * 2.1, 0); c2.rotateZ(-0.05 * k); trunkParts.push(c2); }
+  const trunk = mergeGeos(trunkParts);
+  const fronds = []; for (let k = 0; k < 7; k++) { const f = new THREE.BoxGeometry(0.7, 0.06, 3.6); f.translate(0, 0, 1.8); f.rotateX(0.45); f.rotateY(k / 7 * Math.PI * 2); f.translate(1.3, 8.6, 0); fronds.push(f); }
+  const frond = mergeGeos(fronds);
+  const palms = [], umbs = [], rocks = [];
+  for (let i = 0; i < r.n; i += 4) {
+    const [rx, rz] = rv(r, i);
+    for (const side of [-1, 1]) {
+      if (rnd() < 0.55) continue;
+      const off = side * (r.width / 2 + 5 + rnd() * 40), x = r.x[i] + rx * off, z = r.z[i] + rz * off, h = W.heightAt(x, z);
+      if (h < 0.4 || W.nearest(x, z) && W.nearest(x, z).d < 8) continue;
+      palms.push([x, h - 0.2, z, 0.8 + rnd() * 0.5, rnd() * 6]);
+      W.cols.circ(x, z, 0.35, { kind: 'pole', y0: h - 2, y1: h + 8 });
+    }
+  }
+  for (let x = -900; x < 900; x += 26) {
+    if (rnd() < 0.5) continue;
+    const z = shoreZ(x) - 18 - rnd() * 10, h = W.heightAt(x, z), q = W.nearest(x, z);
+    if (h > 0.3 && (!q || q.d > 9)) umbs.push([x, h, z, 1, rnd() * 6]);
+    if (rnd() < 0.35) { const zr = shoreZ(x) + 10 + rnd() * 40; rocks.push([x + rnd() * 10, W.heightAt(x, zr) - 0.5, zr, 1.5 + rnd() * 2.5, rnd() * 6, 1 + rnd() * 0.6]); }
+  }
+  instanced(W, trunk, new THREE.MeshLambertMaterial({ color: 0x8a6a45 }), palms);
+  instanced(W, frond, new THREE.MeshLambertMaterial({ color: 0x3f9a3a, side: THREE.DoubleSide }), palms, (t, k) => new THREE.Color([0x3f9a3a, 0x4fae42, 0x358a35][k % 3]));
+  const pole = new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6); pole.translate(0, 1.2, 0);
+  const canopy = new THREE.ConeGeometry(1.5, 0.6, 8, 1, true); canopy.translate(0, 2.5, 0);
+  instanced(W, pole, new THREE.MeshLambertMaterial({ color: 0xeeeeee }), umbs);
+  instanced(W, canopy, new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }), umbs, (t, k) => new THREE.Color([0xff5a5a, 0xffd23a, 0x3fb4ff, 0xff8ad8, 0x5ad18a][k % 5]));
+  boulders(W, rocks, 0x8f8576);
+  // a striped lighthouse on the point at the east end
+  const lh = new THREE.Group(), red = new THREE.MeshLambertMaterial({ color: 0xd8372e }), wht = new THREE.MeshLambertMaterial({ color: 0xf4f1ea });
+  for (let k = 0; k < 6; k++) { const s2 = new THREE.Mesh(new THREE.CylinderGeometry(2.4 - k * 0.22, 2.6 - k * 0.22, 3, 14), k % 2 ? wht : red); s2.position.y = 1.5 + k * 3; lh.add(s2); }
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 2, 10), new THREE.MeshBasicMaterial({ color: 0xfff1b0 })); lamp.position.y = 19; lh.add(lamp);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(1.8, 1.6, 10), red); cap.position.y = 20.8; lh.add(cap);
+  const lx = 860, lz = shoreZ(860) - 30; lh.position.set(lx, W.heightAt(lx, lz), lz); W.group.add(lh); W.cols.circ(lx, lz, 2.6, { kind: 'building' });
+  // boost pads on the beach straight
+  for (const s0 of [g.padsAt || [] ].flat()) { const p = spawnOn(r, s0, 0, ''); addBoostPad(W, p.x, p.z, p.h, 8, 5, p.y); }
+  routeCheckpoints(W, r, map.checkpoints.every_km * 1000, true, map.checkpoints.laps);
+  W.grid = Array.from({ length: 12 }, (_, k) => spawnOn(r, r.len - 30 - k * 8, (k % 2 ? -1 : 1) * 3, 'Grid ' + (k + 1)));
+  W.spawns = map.spawn_points.map(sp => spawnOn(r, sp.km * 1000, 0, sp.label));
+  startGantry(W, r, 0, 'PALM SHORE');
+  W.outOfBounds = (x, z, q) => !q || q.d > 450;
+}
+
 /* =================== build entry =================== */
 function build(map, opts) {
   const W = newWorld(map, opts);
-  ({ coast: Gn.genCoast, mountain: Gn.genMountain, circuit: genCircuit, testtrack: genTestTrack, desert: genDesert, city: genCity, oval: genOval })[map.generator](W, map);
+  ({ coast: Gn.genCoast, mountain: Gn.genMountain, circuit: genCircuit, testtrack: genTestTrack, desert: genDesert, city: genCity, oval: genOval, beach: genBeach })[map.generator](W, map);
   if (!W.minimapLines.length) minimapFrom(W);
   return W;
 }

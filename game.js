@@ -15,12 +15,12 @@ const DEF = { steerAxis: 0, steerInvert: false, rotation: 900, deadzone: 0.015,
   thr: { axis: 2, rest: 1, pressed: -1 }, brk: { axis: 5, rest: 1, pressed: -1 }, clu: { axis: 1, rest: 1, pressed: -1 },
   upBtn: 4, downBtn: 5, ebrakeBtn: 7, resetBtn: 0, modeBtn: 3, camBtn: 2, menuBtn: 9, tcUpBtn: 19, tcDownBtn: 20, tc: 7, shiftByCar: {},
   carId: 'vesper-s4', mapId: 'redline', weather: {}, time: {}, traffic: 'map', mode: 'free', laps: 3,
-  assist: 'full', shift: 'car', cam: 'cockpit', seat: 0, ghost: 1, mini: 1, qual: 'high', name: '', room: '', kart: 1, driftBtn: 6, paint: {} };
+  assist: 'full', shift: 'car', cam: 'cockpit', seat: 0, ghost: 1, mini: 1, qual: 'high', name: '', room: '', kart: 1, driftBtn: 6, nitroBtn: 10, itemBtn: 11, paint: {} };
 let cfg = JSON.parse(JSON.stringify(DEF));
 try { const old = JSON.parse(localStorage.getItem('g29track.v1') || 'null'); if (old) for (const k of ['steerAxis', 'steerInvert', 'rotation', 'thr', 'brk', 'clu', 'upBtn', 'downBtn', 'ebrakeBtn', 'resetBtn']) if (old[k] != null) cfg[k] = old[k]; } catch (e) {}
 try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s) cfg = Object.assign(cfg, s); } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} };
-const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −'], ['driftBtn', 'Kart drift (hold)']];
+const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −'], ['driftBtn', 'Kart drift (hold)'], ['nitroBtn', 'Nitro'], ['itemBtn', 'Use item']];
 if (!VEH.find(v => v.id === cfg.carId)) cfg.carId = VEH[0].id;
 if (!MAPS.find(m => m.id === cfg.mapId)) cfg.mapId = MAPS[0].id;
 try { const n = localStorage.getItem('g29track.name'); if (n && !cfg.name) cfg.name = n; } catch (e) {}
@@ -91,6 +91,8 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyT') toggleShift();
   if (e.code === 'BracketRight' || e.code === 'Equal') tcAdjust(1);
   if (e.code === 'BracketLeft' || e.code === 'Minus') tcAdjust(-1);
+  if (e.code === 'KeyN') useNitro();
+  if (e.code === 'KeyE') useItem();
   if (e.code === 'KeyK') { cfg.kart = cfg.kart ? 0 : 1; save(); toast(cfg.kart ? 'Kart drift ON · hold Shift (or the e-brake) while steering' : 'Kart drift OFF · e-brake works normally'); }
 });
 addEventListener('keyup', e => keys.delete(e.code));
@@ -131,6 +133,8 @@ function readInput(dt) {
         if (edge(cfg.camBtn)) cycleCam();
         if (edge(cfg.tcUpBtn)) tcAdjust(1);
         if (edge(cfg.tcDownBtn)) tcAdjust(-1);
+        if (edge(cfg.nitroBtn)) useNitro();
+        if (edge(cfg.itemBtn)) useItem();
         inp.ebrake = !!b[cfg.ebrakeBtn];
         inp.drift = !!b[cfg.driftBtn];
       }
@@ -280,7 +284,7 @@ async function loadMap(id, opts = {}) {
   const sp = opts.grid != null ? world.grid[opts.grid] : (cfg.mode === 'trial' ? (mapDef.mode === 'loop' ? world.grid[0] : world.grid[0]) : world.spawns[clamp(opts.spawn ?? 0, 0, world.spawns.length - 1)]);
   placeAt(sp);
   if (world.tiles) world.tiles.update(sp.x, sp.z, 1e9);
-  initTraffic(); initParticles(); loadGhost(); resetRun();
+  initTraffic(); initParticles(); initItems(); nitro.charge = 1; loadGhost(); resetRun();
   console.log(`[r29] built ${mapDef.name} in ${(performance.now() - t0).toFixed(0)} ms`);
   ready = true; $('loading').classList.remove('on');
   joinNet();
@@ -402,6 +406,111 @@ function boostPads() {
     const dx = st.x - p.x, dz = st.z - p.z, f = dx * Math.sin(p.h) - dz * Math.cos(p.h), l = dx * Math.cos(p.h) + dz * Math.sin(p.h);
     if (Math.abs(f) < p.len / 2 && Math.abs(l) < p.wid / 2 + 0.4 && Math.abs(st.y - car.HCG - p.y) < 1.2) { if (boost.t < 0.9) playThump(1.5); fireBoost(1.1, 9); }
   }
+}
+
+/* ---------- nitro ----------
+ * One shot of nitro (1.4 s of extra push); it refills over 3 seconds after each use. */
+const nitro = { charge: 1 };
+function useNitro() {
+  if (!car || frozen || paused || nitro.charge < 1) return;
+  nitro.charge = 0; fireBoost(1.4, 10.5); playThump(2);
+}
+
+/* ---------- items ----------
+ * Item boxes sit in a row just after every checkpoint. Drive through one to get a random item (one held at a time):
+ *  Turbo   - a short, strong speed burst.
+ *  Bouncer - a green disc fired forward; it ricochets off walls for 8 s and spins out the first car it hits (yours too).
+ * Shots are broadcast to the room; every game simulates them and checks only its own car. */
+const items = { boxes: [], im: null, held: null, shots: [] };
+const ITEM_NAMES = { turbo: 'TURBO', bouncer: 'BOUNCER' };
+function clearItems() {
+  if (items.im) { scene.remove(items.im); items.im.geometry.dispose(); items.im.material.dispose(); }
+  for (const sh of items.shots) scene.remove(sh.m);
+  Object.assign(items, { boxes: [], im: null, shots: [], held: null });
+}
+function initItems() {
+  clearItems();
+  for (const g of world.checkpoints) {
+    const x0 = g.x + g.tx * 30, z0 = g.z + g.tz * 30, q = world.nearest(x0, z0);
+    const hwR = q ? (q.road ? q.road.width / 2 : q.hw || 6) : 6, rx = -g.tz, rz = g.tx;
+    for (const f of [-0.6, -0.2, 0.2, 0.6]) {
+      const x = x0 + rx * f * hwR, z = z0 + rz * f * hwR, y = world.ground(x, z, (g.y || 0) + 4).h;
+      items.boxes.push({ x, z, y: y + 1.1, back: 0 });
+    }
+  }
+  if (!items.boxes.length) return;
+  items.im = new THREE.InstancedMesh(new THREE.BoxGeometry(1.3, 1.3, 1.3), new THREE.MeshNormalMaterial({ transparent: true, opacity: 0.82 }), items.boxes.length);
+  items.im.frustumCulled = false; scene.add(items.im);
+}
+const shotGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.38, 18), shotMat = new THREE.MeshPhongMaterial({ color: 0x2fc24a, shininess: 90, specular: 0xffffff }), shotRim = new THREE.MeshLambertMaterial({ color: 0xf2f2f2 });
+function addShot(o, own) {
+  const m = new THREE.Group(); m.add(new THREE.Mesh(shotGeo, shotMat));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.07, 6, 18), shotRim); rim.rotation.x = Math.PI / 2; m.add(rim);
+  scene.add(m);
+  items.shots.push({ id: o.id, x: o.x, z: o.z, y: o.y, vx: o.vx, vz: o.vz, t: 0, own, m });
+}
+function useItem() {
+  if (!car || frozen || paused || !items.held) return;
+  const it = items.held; items.held = null;
+  if (it === 'turbo') { fireBoost(1.5, 12); playThump(2); return; }
+  const fx = Math.sin(st.h), fz = -Math.cos(st.h), sp = Math.max(38, Math.hypot(st.vx, st.vz) + 18);
+  const o = { id: myId.slice(0, 6) + Math.random().toString(36).slice(2, 7), x: st.x + fx * 3.4, z: st.z + fz * 3.4, y: st.y - car.HCG + 0.5, vx: fx * sp, vz: fz * sp };
+  addShot(o, true);
+  if (net.ready) net.ch.send({ type: 'broadcast', event: 'shot', payload: o }).catch(() => {});
+}
+function onShot(o) {
+  if (!o || typeof o.id !== 'string' || ![o.x, o.z, o.y, o.vx, o.vz].every(Number.isFinite)) return;
+  if (items.shots.some(s2 => s2.id === o.id) || Math.hypot(o.vx, o.vz) > 120) return;
+  addShot(o, false);
+}
+function spinOut() {
+  kart.on = false; kart.tier = 0; boost.t = 0; boost.a = 0;
+  st.vx *= 0.3; st.vz *= 0.3; st.r = (Math.random() < 0.5 ? -1 : 1) * 6.5;
+  toast('Hit by a Bouncer!', 1.6); playThump(5);
+}
+const o3 = new THREE.Object3D();
+function updateItems(dt) {
+  // boxes: spin, pick up, respawn
+  if (items.im) {
+    items.boxes.forEach((b, i) => {
+      const live = now >= b.back;
+      if (live && !frozen && Math.hypot(st.x - b.x, st.z - b.z) < 2.4 && Math.abs(st.y - car.HCG + 0.6 - b.y) < 2.5) {
+        b.back = now + 5;
+        if (!items.held) { items.held = Math.random() < 0.55 ? 'turbo' : 'bouncer'; toast(`Got ${ITEM_NAMES[items.held]} · press E${cfg.itemBtn != null ? ' or your item button' : ''}`, 1.4); }
+      }
+      o3.position.set(b.x, b.y + Math.sin(now * 2 + i) * 0.15, b.z); o3.rotation.set(0.5, now * 1.6 + i, 0.3);
+      const k = now >= b.back ? 1 : 0; o3.scale.set(k || 1e-3, k || 1e-3, k || 1e-3); o3.updateMatrix(); items.im.setMatrixAt(i, o3.matrix);
+    });
+    items.im.instanceMatrix.needsUpdate = true;
+  }
+  // shots: move in small steps, bounce off walls, follow the ground
+  for (let k = items.shots.length - 1; k >= 0; k--) {
+    const sh = items.shots[k]; sh.t += dt;
+    let dead = sh.t > 8;
+    const n = Math.max(1, Math.ceil(Math.hypot(sh.vx, sh.vz) * dt / 0.5));
+    for (let j = 0; j < n && !dead; j++) {
+      sh.x += sh.vx * dt / n; sh.z += sh.vz * dt / n;
+      for (const it of world.cols.query(sh.x, sh.z, 1)) {
+        if (sh.y < it.y0 - 0.5 || sh.y > it.y1 + 0.5) continue;
+        let nx = 0, nz = 0, pen = 0; const R = 0.5;
+        if (it.t === 0) { const ex = it.bx - it.ax, ez = it.bz - it.az, L2 = ex * ex + ez * ez || 1, t = clamp(((sh.x - it.ax) * ex + (sh.z - it.az) * ez) / L2, 0, 1), px = it.ax + ex * t, pz = it.az + ez * t, d = Math.hypot(sh.x - px, sh.z - pz); if (d >= R || d < 1e-6) continue; nx = (sh.x - px) / d; nz = (sh.z - pz) / d; pen = R - d; }
+        else if (it.t === 1) { const d = Math.hypot(sh.x - it.x, sh.z - it.z); if (d >= R + it.r || d < 1e-6) continue; nx = (sh.x - it.x) / d; nz = (sh.z - it.z) / d; pen = R + it.r - d; }
+        else { const px = clamp(sh.x, it.x0, it.x1), pz = clamp(sh.z, it.z0, it.z1), d = Math.hypot(sh.x - px, sh.z - pz); if (d >= R) continue; if (d > 1e-6) { nx = (sh.x - px) / d; nz = (sh.z - pz) / d; pen = R - d; } else { nx = -Math.sign(sh.vx) || 1; pen = R; } }
+        sh.x += nx * pen; sh.z += nz * pen;
+        const vn = sh.vx * nx + sh.vz * nz; if (vn < 0) { sh.vx -= 2 * vn * nx; sh.vz -= 2 * vn * nz; }
+      }
+      const g = world.ground(sh.x, sh.z, sh.y + 1.5);
+      if (g.h > sh.y + 1.2) { sh.vx = -sh.vx; sh.vz = -sh.vz; } else sh.y = g.h + 0.35;
+      if ((world.ocean && g.h < -0.5) || g.water > 0.6) dead = true;
+    }
+    // hits: my own car (the shooter is safe for the first moment), traffic for the shooter, remote cars just absorb it
+    if (!dead && (!sh.own || sh.t > 0.6) && Math.hypot(st.x - sh.x, st.z - sh.z) < 1.9 && Math.abs(st.y - car.HCG - sh.y) < 2) { spinOut(); dead = true; }
+    if (!dead && sh.own) for (const a of traffic.list) if (Math.hypot(a.x - sh.x, a.z - sh.z) < 2.2) { a.crashed = a.crashed || 0.001; a.vx += sh.vx * 0.25; a.vz += sh.vz * 0.25; a.r += 3; dead = true; break; }
+    if (!dead) for (const [, gh] of ghosts) if (Math.hypot(gh.x - sh.x, gh.z - sh.z) < 1.9 && Math.abs(gh.y - sh.y) < 2) { dead = true; break; }
+    if (dead) { scene.remove(sh.m); items.shots.splice(k, 1); continue; }
+    sh.m.position.set(sh.x, sh.y, sh.z); sh.m.rotation.y += dt * 12;
+  }
+  nitro.charge = Math.min(1, nitro.charge + dt / 3);
 }
 
 function physicsFrame(dt, inp) {
@@ -862,6 +971,8 @@ function hud(inp, dt) {
   else if (flashT > 0) { dr.hidden = false; dr.className = 'hud ' + flash; $('dScore').textContent = flash === 'lost' ? 'LOST' : '+' + banked.toLocaleString(); $('dSub').textContent = flash === 'lost' ? 'Spun or went off' : 'DRIFT BANKED'; }
   else dr.hidden = true;
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').hidden = true; }
+  $('itemName').textContent = items.held ? ITEM_NAMES[items.held] : '—'; $('itemSlot').className = 'slot ' + (items.held || '');
+  $('nitroF').style.width = (nitro.charge * 100).toFixed(0) + '%'; $('pow').classList.toggle('ready', nitro.charge >= 1);
   const kb = $('kart');
   if (boost.flash > 0 || boost.t > 0.2) { kb.hidden = false; kb.className = 'hud boost'; $('kTxt').textContent = 'BOOST'; $('kTxt').style.color = ''; kb.querySelectorAll('i').forEach(e => e.style.background = ''); }
   else if (kart.on) { kb.hidden = false; kb.className = 'hud'; $('kTxt').textContent = 'DRIFT'; $('kTxt').style.color = KCOL[kart.tier]; kb.querySelectorAll('i').forEach((e, i) => e.style.background = kart.tier > i ? KCOL[kart.tier] : ''); }
@@ -1078,6 +1189,7 @@ function joinNet() {
   ch.on('broadcast', { event: 'race' }, msg => onRace(msg && msg.payload));
   ch.on('broadcast', { event: 'fin' }, msg => onFinish(msg && msg.payload));
   ch.on('broadcast', { event: 'hit' }, msg => onHitMsg(msg && msg.payload));
+  ch.on('broadcast', { event: 'shot' }, msg => onShot(msg && msg.payload));
   ch.on('presence', { event: 'sync' }, renderRoster);
   ch.on('presence', { event: 'leave' }, ({ key: k }) => removeGhost(k));
   ch.subscribe(status => {
@@ -1375,11 +1487,12 @@ function update(dt) {
   physicsFrame(dt, inp);
   updateTraffic(dt);
   const others = traffic.list.slice(); for (const [, gh] of ghosts) others.push({ key: gh.id, remote: true, x: gh.x, z: gh.z, y: gh.y + car.HCG, h: gh.h, vx: gh.vx, vz: gh.vz, len: gh.len, wid: gh.wid, mass: gh.mass });
-  collide(others); flushPendingHits(); boostPads();
+  collide(others); flushPendingHits(); boostPads(); updateItems(dt);
   if (!frozen) checkGates(px, pz);
   recordGhost(dt); driftUpdate(dt); skids();
   updatePanel(inp.gp); hud(inp, dt); updateAudio(inp); netTick(dt); raceTick();
   if (world.updateLights) world.updateLights(now, st.x, st.z);
+  if (world.update) world.update(now);
   if (world.boostPads) { const o = -(now * 1.6 % 1); for (const p of world.boostPads) p.tex.offset.y = o; }
 }
 function frame(t) {
@@ -1412,10 +1525,11 @@ requestAnimationFrame(frame);
 window.__qa = {
   loadMap: async (id, o = {}) => { if (o.weather) cfg.weather[id] = o.weather; if (o.time) cfg.time[id] = o.time; if (o.car) cfg.carId = o.car; if (o.mode) cfg.mode = o.mode; if (o.traffic != null) cfg.traffic = o.traffic; await loadMap(id, o); hideMenu(); return window.__qa.snap(); },
   snap: () => ({ map: mapDef && mapDef.id, car: spec.id, x: st.x, y: st.y, z: st.z, h: st.h, mph: Math.hypot(st.vx, st.vz) / MPH, gear: st.gear, rpm: st.we * P.RPM, surf: surfName, contact: st.contact, damage: st.damage,
-    tempF: st.tempF, tempR: st.tempR, cp: run.cp, started: run.started, laps: run.laps, lastLap: run.lastLap, traffic: traffic.list.length, tiles: world && world.tiles ? world.tiles.tiles.size : 0, water: inWater, cap: speedCap, abs: st.absOn, esc: st.escOn, tc: st.tcOn, frozen, cam: cfg.cam, kart: kart.on, tier: kart.tier, boost: boost.t, vy: st.vy }),
+    tempF: st.tempF, tempR: st.tempR, cp: run.cp, started: run.started, laps: run.laps, lastLap: run.lastLap, traffic: traffic.list.length, tiles: world && world.tiles ? world.tiles.tiles.size : 0, water: inWater, cap: speedCap, abs: st.absOn, esc: st.escOn, tc: st.tcOn, frozen, cam: cfg.cam, item: items.held, nitro: nitro.charge, shots: items.shots.length, boxes: items.boxes.length, kart: kart.on, tier: kart.tier, boost: boost.t, vy: st.vy }),
   input: o => { qaInput = o; }, cam: c => { cfg.cam = c; }, auto: mph => { qaAuto = (mph || 0) * MPH; },
   place: sp => { placeAt(sp); return window.__qa.snap(); },
   world: () => world, run: () => run, hour: h => { hour = h; },
+  give: it => { items.held = it; }, useItem: () => useItem(), useNitro: () => useNitro(), shot: o => onShot(o),
   advance: sec => { for (let t = 0; t < sec - 1e-9; t += 1 / 60) update(1 / 60); return window.__qa.snap(); },
 };
 })();
