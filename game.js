@@ -15,12 +15,13 @@ const DEF = { steerAxis: 0, steerInvert: false, rotation: 900, deadzone: 0.015,
   thr: { axis: 2, rest: 1, pressed: -1 }, brk: { axis: 5, rest: 1, pressed: -1 }, clu: { axis: 1, rest: 1, pressed: -1 },
   upBtn: 4, downBtn: 5, ebrakeBtn: 7, resetBtn: 0, modeBtn: 3, camBtn: 2, menuBtn: 9, tcUpBtn: 19, tcDownBtn: 20, tc: 7, shiftByCar: {},
   carId: 'vesper-s4', mapId: 'redline', weather: {}, time: {}, traffic: 'map', mode: 'free', laps: 3,
-  assist: 'full', shift: 'car', cam: 'cockpit', seat: 0, ghost: 1, mini: 1, qual: 'high', name: '', room: '', kart: 1, driftBtn: 6, nitroBtn: 10, itemBtn: 11, paint: {} };
+  assist: 'full', shift: 'car', cam: 'cockpit', seat: 0, ghost: 1, mini: 1, qual: 'high', name: '', room: '', kart: 1, driftBtn: 6, nitroBtn: 11, itemBtn: 13, lookBtn: 10, gunBtn: 1, missileBtn: 8, grenadeBtn: 21, weapons: 'vs', bots: 3, paint: {} };
 let cfg = JSON.parse(JSON.stringify(DEF));
 try { const old = JSON.parse(localStorage.getItem('g29track.v1') || 'null'); if (old) for (const k of ['steerAxis', 'steerInvert', 'rotation', 'thr', 'brk', 'clu', 'upBtn', 'downBtn', 'ebrakeBtn', 'resetBtn']) if (old[k] != null) cfg[k] = old[k]; } catch (e) {}
 try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s) cfg = Object.assign(cfg, s); } catch (e) {}
+if (cfg.lookBtn == null) { cfg.lookBtn = 10; if (cfg.nitroBtn === 10) cfg.nitroBtn = 11; if (cfg.itemBtn === 11) cfg.itemBtn = 13; } // L3 is now look-back
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} };
-const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −'], ['driftBtn', 'Kart drift (hold)'], ['nitroBtn', 'Nitro'], ['itemBtn', 'Use item']];
+const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −'], ['driftBtn', 'Kart drift (hold)'], ['nitroBtn', 'Nitro'], ['itemBtn', 'Use item'], ['lookBtn', 'Look back (hold)'], ['gunBtn', 'Fire gun'], ['missileBtn', 'Fire missile'], ['grenadeBtn', 'Throw grenade']];
 if (!VEH.find(v => v.id === cfg.carId)) cfg.carId = VEH[0].id;
 if (!MAPS.find(m => m.id === cfg.mapId)) cfg.mapId = MAPS[0].id;
 try { const n = localStorage.getItem('g29track.name'); if (n && !cfg.name) cfg.name = n; } catch (e) {}
@@ -73,7 +74,7 @@ let skyRing = null;
 
 /* ---------- input ---------- */
 const keys = new Set();
-let kbSteer = 0, blocked = false, padId = '', prevBtns = [], usingKeys = false;
+let padLook = false, kbSteer = 0, blocked = false, padId = '', prevBtns = [], usingKeys = false;
 const moved = new Set();
 let detect = null, binding = null;
 addEventListener('keydown', e => {
@@ -81,7 +82,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Escape') { e.preventDefault(); togglePause(); return; }
   if (document.body.classList.contains('inmenu')) return;
   keys.add(e.code); usingKeys = true;
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'AltLeft', 'AltRight'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
   if (e.code === 'KeyR') resetToRoad();
   if (e.code === 'ArrowUp') paddle(1);
@@ -91,11 +92,14 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyT') toggleShift();
   if (e.code === 'BracketRight' || e.code === 'Equal') tcAdjust(1);
   if (e.code === 'BracketLeft' || e.code === 'Minus') tcAdjust(-1);
+  if (e.code === 'KeyF' || e.code === 'Digit1') fireWeapon('gun');
+  if (e.code === 'KeyG' || e.code === 'Digit2') fireWeapon('mis');
+  if (e.code === 'KeyH' || e.code === 'Digit3') fireWeapon('gre');
   if (e.code === 'KeyN') useNitro();
   if (e.code === 'KeyE') useItem();
   if (e.code === 'KeyK') { cfg.kart = cfg.kart ? 0 : 1; save(); toast(cfg.kart ? 'Kart drift ON · hold Shift (or the e-brake) while steering' : 'Kart drift OFF · e-brake works normally'); }
 });
-addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('keyup', e => { keys.delete(e.code); if (e.code === 'AltLeft' || e.code === 'AltRight') e.preventDefault(); });
 addEventListener('blur', () => keys.clear());
 
 function getPad() {
@@ -134,9 +138,13 @@ function readInput(dt) {
         if (edge(cfg.tcUpBtn)) tcAdjust(1);
         if (edge(cfg.tcDownBtn)) tcAdjust(-1);
         if (edge(cfg.nitroBtn)) useNitro();
+        if (edge(cfg.gunBtn)) fireWeapon('gun');
+        if (edge(cfg.missileBtn)) fireWeapon('mis');
+        if (edge(cfg.grenadeBtn)) fireWeapon('gre');
         if (edge(cfg.itemBtn)) useItem();
         inp.ebrake = !!b[cfg.ebrakeBtn];
         inp.drift = !!b[cfg.driftBtn];
+        padLook = !!b[cfg.lookBtn];
       }
     }
     prevBtns = b;
@@ -284,7 +292,7 @@ async function loadMap(id, opts = {}) {
   const sp = opts.grid != null ? world.grid[opts.grid] : (cfg.mode === 'trial' ? (mapDef.mode === 'loop' ? world.grid[0] : world.grid[0]) : world.spawns[clamp(opts.spawn ?? 0, 0, world.spawns.length - 1)]);
   placeAt(sp);
   if (world.tiles) world.tiles.update(sp.x, sp.z, 1e9);
-  initTraffic(); initParticles(); initItems(); nitro.charge = 1; loadGhost(); resetRun();
+  clearVs(); initTraffic(); initParticles(); initItems(); nitro.charge = 1; loadGhost(); resetRun();
   console.log(`[r29] built ${mapDef.name} in ${(performance.now() - t0).toFixed(0)} ms`);
   ready = true; $('loading').classList.remove('on');
   joinNet();
@@ -430,6 +438,7 @@ function clearItems() {
 }
 function initItems() {
   clearItems();
+  if (world.itemSpots) for (const p of world.itemSpots) items.boxes.push({ x: p.x, z: p.z, y: world.ground(p.x, p.z, 5).h + 1.1, back: 0 });
   for (const g of world.checkpoints) {
     const x0 = g.x + g.tx * 30, z0 = g.z + g.tz * 30, q = world.nearest(x0, z0);
     const hwR = q ? (q.road ? q.road.width / 2 : q.hw || 6) : 6, rx = -g.tz, rz = g.tx;
@@ -513,11 +522,266 @@ function updateItems(dt) {
   nitro.charge = Math.min(1, nitro.charge + dt / 3);
 }
 
+/* ---------- VS: weapons, wrecks, bots ----------
+ * Every car carries a gun (a burst of rounds), missiles (lock onto the nearest car ahead) and grenades (lobbed,
+ * bounce, explode after 2 s or on contact): 3 of each. A spent shot comes back 10 s after it was fired.
+ * Damage is the health bar: at 100% the car is wrecked, explodes, and respawns repaired 3 s later (every map).
+ * Shots are broadcast to the room and simulated by every game; each game applies hits to its own car only and
+ * announces its own wrecks (with who did it). Practice bots appear on VS maps when nobody else is in the room. */
+const WPN = { gun: { label: 'GUN', key: 'F' }, mis: { label: 'MISSILE', key: 'G' }, gre: { label: 'GRENADE', key: 'H' } };
+const RELOAD = 10, MAX_AMMO = 3;
+const vs = { dead: 0, kos: 0, wrecks: 0, lastBy: null, lastByT: -99, ammo: {}, proj: [], fx: [], bots: [] };
+const weaponsOn = () => !!mapDef && (cfg.weapons === 'all' || (cfg.weapons !== 'off' && mapDef.mode === 'arena'));
+function resetAmmo() { for (const k in WPN) vs.ammo[k] = { n: MAX_AMMO, back: [] }; }
+resetAmmo();
+function poseOf(id) {
+  if (id === myId) return st ? { x: st.x, z: st.z, y: st.y - car.HCG, h: st.h, vx: st.vx, vz: st.vz, dead: vs.dead > 0 } : null;
+  const b = vs.bots.find(b2 => b2.id === id); if (b) return { x: b.x, z: b.z, y: b.y, h: b.h, vx: b.vx, vz: b.vz, dead: b.dead > 0 };
+  const g = ghosts.get(id); return g ? { x: g.x, z: g.z, y: g.y, h: g.h, vx: g.vx, vz: g.vz } : null;
+}
+const nameOf = id => id === myId ? myName() : (vs.bots.find(b => b.id === id) || {}).name || (ghosts.get(id) || {}).name || 'Someone';
+// push a circle of radius R out of static walls; returns the summed push normal or null
+function wallPush(o, R) {
+  let hit = null;
+  for (const it of world.cols.query(o.x, o.z, R + 1)) {
+    if (o.y + 0.5 < it.y0 - 0.3 || o.y > it.y1 + 0.3) continue;
+    let nx = 0, nz = 0, pen = 0;
+    if (it.t === 0) { const ex = it.bx - it.ax, ez = it.bz - it.az, L2 = ex * ex + ez * ez || 1, t = clamp(((o.x - it.ax) * ex + (o.z - it.az) * ez) / L2, 0, 1), px = it.ax + ex * t, pz = it.az + ez * t, d = Math.hypot(o.x - px, o.z - pz); if (d >= R || d < 1e-6) continue; nx = (o.x - px) / d; nz = (o.z - pz) / d; pen = R - d; }
+    else if (it.t === 1) { const d = Math.hypot(o.x - it.x, o.z - it.z); if (d >= R + it.r || d < 1e-6) continue; nx = (o.x - it.x) / d; nz = (o.z - it.z) / d; pen = R + it.r - d; }
+    else { const px = clamp(o.x, it.x0, it.x1), pz = clamp(o.z, it.z0, it.z1), d = Math.hypot(o.x - px, o.z - pz); if (d >= R) continue; if (d > 1e-6) { nx = (o.x - px) / d; nz = (o.z - pz) / d; pen = R - d; } else { const m = Math.min(o.x - it.x0, it.x1 - o.x, o.z - it.z0, it.z1 - o.z); if (m === o.x - it.x0) nx = -1; else if (m === it.x1 - o.x) nx = 1; else if (m === o.z - it.z0) nz = -1; else nz = 1; pen = m + R; } }
+    o.x += nx * pen; o.z += nz * pen; hit = hit || { nx: 0, nz: 0 }; hit.nx += nx; hit.nz += nz;
+  }
+  return hit;
+}
+// targets a projectile from `owner` can hit: my car (if someone else fired), local bots (if I or ... fired), remote cars (absorb only)
+function targetsFor(owner, selfOk) {
+  const out = [];
+  if (st && !(vs.dead > 0) && (owner !== myId || selfOk)) out.push({ id: myId, x: st.x, z: st.z, y: st.y - car.HCG, me: true });
+  if (owner === myId || selfOk) for (const b of vs.bots) if (!(b.dead > 0) && b.id !== owner) out.push({ id: b.id, x: b.x, z: b.z, y: b.y, bot: b });
+  for (const [id, g] of ghosts) if (id !== owner) out.push({ id, x: g.x, z: g.z, y: g.y, remote: true });
+  return out;
+}
+function hurt(t, dmg, owner, nx, nz) { // apply a weapon hit to a local target
+  if (t.me && owner && owner.startsWith('bot')) dmg *= 0.4; // practice bots hit softer
+  if (t.me) { vs.lastBy = owner; vs.lastByT = now; st.vx += nx * dmg * 18; st.vz += nz * dmg * 18; st.r += (Math.random() - 0.5) * dmg * 6; carDamage(dmg, st.x - nx, st.z - nz, nx, nz, true); }
+  else if (t.bot) { t.bot.dmg = Math.min(1, t.bot.dmg + dmg); t.bot.lastBy = owner; t.bot.v *= 0.6; if (t.bot.dmg >= 0.999) botWreck(t.bot); }
+}
+let EXPL_GEO = null;
+function boom(x, y, z, R, dmg, owner, direct) {
+  if (!EXPL_GEO) EXPL_GEO = new THREE.SphereGeometry(1, 16, 12);
+  const fire = new THREE.Mesh(EXPL_GEO, new THREE.MeshBasicMaterial({ color: 0xff8a1f, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  const smoke = new THREE.Mesh(EXPL_GEO, new THREE.MeshLambertMaterial({ color: 0x2b2b2b, transparent: true, opacity: 0.7, depthWrite: false }));
+  fire.position.set(x, y + 0.8, z); smoke.position.set(x, y + 1.2, z); scene.add(fire, smoke);
+  vs.fx.push({ fire, smoke, t: 0, R });
+  if (st) { const d = Math.hypot(st.x - x, st.z - z); if (d < 60) playThump(Math.max(2, 10 - d / 6)); }
+  if (!dmg) return;
+  for (const t of targetsFor(owner, true)) {
+    if (t.remote) continue;
+    const d = Math.hypot(t.x - x, t.z - z), dy = Math.abs(t.y - y);
+    if (d > R || dy > R) continue;
+    const f = t.id === direct ? 1 : 1 - d / R, nx = (t.x - x) / (d || 1), nz = (t.z - z) / (d || 1);
+    hurt(t, dmg * f * (t.id === owner ? 0.5 : 1), owner, nx, nz);
+    if (t.me) st.vy += 4 * f;
+  }
+}
+const projGeo = { b: new THREE.BoxGeometry(0.12, 0.12, 1.6), m: new THREE.CylinderGeometry(0.16, 0.2, 1.3, 8).rotateX(Math.PI / 2), g: new THREE.SphereGeometry(0.28, 10, 8) };
+const projMat = { b: new THREE.MeshBasicMaterial({ color: 0xffe27a }), m: new THREE.MeshLambertMaterial({ color: 0xe8e8e8 }), g: new THREE.MeshLambertMaterial({ color: 0x3b4a2f }) };
+function addProj(p) {
+  const m = new THREE.Mesh(projGeo[p.kind], projMat[p.kind]); m.visible = !p.wait;
+  if (p.kind === 'm') { const fl = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff6a1f, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false })); fl.position.z = 0.8; m.add(fl); }
+  scene.add(m); p.m = m; p.t = 0; vs.proj.push(p);
+}
+function launch(k, from, o) { // o: launch data (from the network or made locally)
+  if (k === 'gun') for (let i = 0; i < 10; i++) addProj({ kind: 'b', owner: from, wait: i * 0.055, spread: (Math.random() - 0.5) * 0.03 });
+  if (k === 'mis') addProj({ kind: 'm', owner: from, id: o.id, x: o.x, y: o.y, z: o.z, h: o.h, sp: 62, tgt: o.tgt || null });
+  if (k === 'gre') addProj({ kind: 'g', owner: from, id: o.id, x: o.x, y: o.y, z: o.z, vx: o.vx, vy: o.vy, vz: o.vz });
+}
+function pickTarget(p, cone, range) {
+  let best = null, bd = Infinity;
+  for (const t of targetsFor(p.id === myId ? myId : p.id)) {
+    if (t.id === p.id) continue;
+    const dx = t.x - p.x, dz = t.z - p.z, d = Math.hypot(dx, dz); if (d > range) continue;
+    const a = Math.abs(wrapA(Math.atan2(dx, -dz) - p.h)); if (a > cone) continue;
+    const score = d * (1 + a); if (score < bd) { bd = score; best = t.id; }
+  }
+  return best;
+}
+function fireFrom(k, shooter) { // shooter: { id, x, y, z, h, vx, vz }
+  const fx = Math.sin(shooter.h), fz = -Math.cos(shooter.h);
+  let o = { id: shooter.id.slice(0, 6) + Math.random().toString(36).slice(2, 7) };
+  if (k === 'mis') Object.assign(o, { x: shooter.x + fx * 3.2, y: shooter.y + 0.9, z: shooter.z + fz * 3.2, h: shooter.h, tgt: pickTarget(shooter, 0.6, 170) });
+  if (k === 'gre') Object.assign(o, { x: shooter.x + fx * 2.6, y: shooter.y + 1.4, z: shooter.z + fz * 2.6, vx: shooter.vx + fx * 15, vy: 6.5, vz: shooter.vz + fz * 15 });
+  launch(k, shooter.id, o);
+  return o;
+}
+function fireWeapon(k) {
+  if (!ready || paused || frozen || !weaponsOn() || vs.dead > 0) return;
+  const a = vs.ammo[k]; if (!a || a.n <= 0) { toast(`${WPN[k].label}: reloading`, 0.8); return; }
+  a.n--; a.back.push(now + RELOAD);
+  const o = fireFrom(k, { id: myId, x: st.x, y: st.y - car.HCG, z: st.z, h: st.h, vx: st.vx, vz: st.vz });
+  if (net.ready) net.ch.send({ type: 'broadcast', event: 'wpn', payload: Object.assign({ k, from: myId }, o) }).catch(() => {});
+}
+function onWpn(m) {
+  if (!m || typeof m.from !== 'string' || m.from === myId || !WPN[m.k]) return;
+  if (m.k !== 'gun' && ![m.x, m.y, m.z].every(Number.isFinite)) return;
+  if (m.k === 'gre' && ![m.vx, m.vy, m.vz].every(v => Number.isFinite(v) && Math.abs(v) < 80)) return;
+  launch(m.k, m.from, m);
+}
+function onKo(m) {
+  if (!m || typeof m.victim !== 'string') return;
+  const v = cleanName(m.vname) || 'Someone', k = cleanName(m.kname);
+  if (m.killer === myId) { vs.kos++; toast(`You wrecked ${v}! · ${vs.kos} KO${vs.kos === 1 ? '' : 's'}`, 2.2); trackPresence(); }
+  else toast(k ? `${k} wrecked ${v}` : `${v} wrecked`, 1.8);
+}
+function checkWreck() {
+  if (!st || vs.dead > 0 || st.damage < 0.999) return;
+  const by = now - vs.lastByT < 8 ? vs.lastBy : null;
+  vs.dead = 3; vs.wrecks++; kart.on = false; boost.t = 0;
+  boom(st.x, st.y - car.HCG, st.z, 0, 0, null);
+  st.vx *= 0.3; st.vz *= 0.3;
+  const kname = by && by !== myId ? nameOf(by) : '';
+  toast(kname ? `Wrecked by ${kname}` : 'Wrecked!', 2.5);
+  if (net.ready) net.ch.send({ type: 'broadcast', event: 'ko', payload: { victim: myId, vname: myName(), killer: by && !by.startsWith('bot') ? by : null, kname } }).catch(() => {});
+  trackPresence();
+}
+function respawn() {
+  if (mapDef.mode === 'arena') {
+    let best = world.spawns[0], bd = -1; // the spawn farthest from everyone else
+    for (const sp of world.spawns) { let d = 1e9; for (const t of targetsFor('-', true)) if (!t.me) d = Math.min(d, Math.hypot(t.x - sp.x, t.z - sp.z)); d += Math.random() * 30; if (d > bd) { bd = d; best = sp; } }
+    placeAt(best);
+  } else if (run.started && run.lastGate) { placeAt(run.lastGate.spawn); run.valid = false; }
+  else resetToRoad();
+  st.damage = 0; st.pull = 0; model.repair(); vs.dead = 0; vs.lastBy = null;
+  toast('Back in the game', 1.2);
+}
+/* practice bots */
+const BOT_COLS = [0xe8453c, 0xf2c230, 0xb05ce6, 0xff8a2b, 0x25c6d9, 0xf26bb5];
+function botsWanted() { return mapDef && mapDef.mode === 'arena' && weaponsOn() && ghosts.size === 0 ? clamp(+cfg.bots || 0, 0, 6) : 0; }
+function clearBots() { for (const b of vs.bots) { scene.remove(b.m.group); disposeGroup(b.m.group); } vs.bots = []; }
+function addBot(i) {
+  const sp = carById(VEH[(i * 3 + 1) % VEH.length].id), color = BOT_COLS[i % BOT_COLS.length];
+  const m = makeModelFor(sp, { color, decal: { style: 'number', color, num: i + 1 } }); scene.add(m.group);
+  const b = { id: 'bot' + (i + 1), name: 'Bot ' + (i + 1), m, x: 0, z: 0, y: 0, h: 0, v: 0, vx: 0, vz: 0, dmg: 0, dead: 0, wp: null, wpT: 0, gunT: 3 + Math.random() * 3, misT: 8 + Math.random() * 5, greT: 6, len: sp.visual.length, wid: sp.visual.width, mass: sp.mass_kg };
+  b.key = b; m.group.add(makeLabel(b.name, color)); placeBot(b); vs.bots.push(b);
+}
+function placeBot(b) {
+  const sp = world.spawns[Math.floor(Math.random() * world.spawns.length)];
+  Object.assign(b, { x: sp.x, z: sp.z, y: 0, h: sp.h, v: 0, vx: 0, vz: 0, dmg: 0, dead: 0, wp: null });
+  b.m.group.visible = true;
+}
+function botWreck(b) {
+  if (b.dead > 0) return;
+  b.dead = 4; b.m.group.visible = false; boom(b.x, b.y, b.z, 0, 0, null);
+  if (b.lastBy === myId) { vs.kos++; toast(`You wrecked ${b.name}! · ${vs.kos} KO${vs.kos === 1 ? '' : 's'}`, 2); }
+}
+function updateBots(dt) {
+  const want = botsWanted();
+  while (vs.bots.length > want) { const b = vs.bots.pop(); scene.remove(b.m.group); disposeGroup(b.m.group); }
+  while (vs.bots.length < want) addBot(vs.bots.length);
+  const pts = world.botPoints || [];
+  for (const b of vs.bots) {
+    if (b.dead > 0) { b.dead -= dt; if (b.dead <= 0) placeBot(b); continue; }
+    const dx = st.x - b.x, dz = st.z - b.z, dist = Math.hypot(dx, dz), alive = !(vs.dead > 0);
+    const chase = alive && dist < 110;
+    b.wpT -= dt;
+    if (!b.wp || b.wpT <= 0 || Math.hypot(b.wp[0] - b.x, b.wp[1] - b.z) < 10) { b.wp = pts.length ? pts[Math.floor(Math.random() * pts.length)] : [0, 0]; b.wpT = 9; }
+    const tx = chase ? st.x + st.vx * 0.6 : b.wp[0], tz = chase ? st.z + st.vz * 0.6 : b.wp[1];
+    let want2 = Math.atan2(tx - b.x, -(tz - b.z));
+    if (chase && dist < 22) want2 = Math.atan2(dx, -dz) + (b.id.charCodeAt(3) % 2 ? 1.4 : -1.4); // circle around instead of ramming
+    // look ahead for walls and steer around them
+    const probe = h => { const o = { x: b.x + Math.sin(h) * 9, z: b.z - Math.cos(h) * 9, y: b.y }; return !wallPush(o, 2.2); };
+    if (!probe(want2)) { for (const d of [0.5, -0.5, 1, -1, 1.6, -1.6, 2.4, -2.4]) if (probe(b.h + d)) { want2 = b.h + d; break; } }
+    let vT;
+    if (b.rev > 0) { b.rev -= dt; b.h += b.revDir * 1.4 * dt; vT = -6; } // backing out of a wall
+    else {
+      b.h += clamp(wrapA(want2 - b.h), -1.7 * dt, 1.7 * dt);
+      vT = (chase && dist < 14 ? 9 : 19) * (1 - 0.5 * Math.min(1, Math.abs(wrapA(want2 - b.h)))) * (1 - 0.4 * b.dmg);
+    }
+    b.v += clamp(vT - b.v, -12 * dt, 6 * dt);
+    b.vx = Math.sin(b.h) * b.v; b.vz = -Math.cos(b.h) * b.v;
+    b.x += b.vx * dt; b.z += b.vz * dt;
+    if (wallPush(b, 1.1) && !(b.rev > 0)) { b.v = 0; b.rev = 1; b.revDir = Math.random() < 0.5 ? -1 : 1; b.wp = null; }
+    b.y = world.ground(b.x, b.z, b.y + 1.5).h;
+    // weapons: gun and missiles at the player when lined up, grenades when close
+    b.gunT -= dt; b.misT -= dt; b.greT -= dt;
+    if (alive && !frozen && weaponsOn()) {
+      const ang = Math.abs(wrapA(Math.atan2(dx, -dz) - b.h)), shooter = { id: b.id, x: b.x, y: b.y, z: b.z, h: b.h, vx: b.vx, vz: b.vz };
+      if (b.gunT <= 0 && dist < 70 && ang < 0.25) { fireFrom('gun', shooter); b.gunT = 5 + Math.random() * 4; }
+      if (b.misT <= 0 && dist < 140 && ang < 0.5) { fireFrom('mis', shooter); b.misT = 13 + Math.random() * 8; }
+      if (b.greT <= 0 && dist < 28 && ang < 0.7) { fireFrom('gre', shooter); b.greT = 14 + Math.random() * 8; }
+    }
+    b.m.group.position.set(b.x, b.y, b.z); b.m.group.rotation.set(0, -b.h, 0); b.m.spin(b.v * dt);
+  }
+}
+function updateVs(dt) {
+  for (const k in vs.ammo) { const a = vs.ammo[k]; while (a.back.length && a.back[0] <= now) { a.back.shift(); a.n = Math.min(MAX_AMMO, a.n + 1); } }
+  if (vs.dead > 0) { vs.dead -= dt; if (vs.dead <= 0) respawn(); }
+  updateBots(dt);
+  // projectiles
+  for (let k = vs.proj.length - 1; k >= 0; k--) {
+    const p = vs.proj[k]; let dead = false;
+    if (p.wait != null) { // gun rounds leave the shooter's muzzle one after another
+      p.wait -= dt; if (p.wait > 0) continue;
+      const s0 = poseOf(p.owner); if (!s0 || s0.dead) { dead = true; } else {
+        const h = s0.h + p.spread, fx = Math.sin(h), fz = -Math.cos(h);
+        Object.assign(p, { x: s0.x + fx * 3, y: s0.y + 0.75, z: s0.z + fz * 3, vx: s0.vx + fx * 150, vz: s0.vz + fz * 150, h, wait: null }); p.m.visible = true;
+      }
+    }
+    if (!dead) {
+      p.t += dt;
+      const n = Math.max(1, Math.ceil((p.kind === 'b' ? 150 : 60) * dt / 0.8));
+      for (let j = 0; j < n && !dead; j++) {
+        const h2 = dt / n;
+        if (p.kind === 'b') { p.x += p.vx * h2; p.z += p.vz * h2; if (p.t > 0.9) dead = true; }
+        if (p.kind === 'm') {
+          const tp = p.tgt ? poseOf(p.tgt) : null;
+          if (tp && !tp.dead && p.t > 0.15) { const want = Math.atan2(tp.x - p.x, -(tp.z - p.z)); p.h += clamp(wrapA(want - p.h), -2.4 * h2, 2.4 * h2); }
+          p.x += Math.sin(p.h) * p.sp * h2; p.z -= Math.cos(p.h) * p.sp * h2;
+          const gy = world.ground(p.x, p.z, p.y + 2).h; p.y += (gy + 0.9 - p.y) * Math.min(1, h2 * 6);
+          if (p.t > 5) { boom(p.x, p.y, p.z, 6, 0.25, p.owner); dead = true; }
+        }
+        if (p.kind === 'g') {
+          p.vy -= 9.81 * h2; p.x += p.vx * h2; p.y += p.vy * h2; p.z += p.vz * h2;
+          const gy = world.ground(p.x, p.z, p.y + 1).h;
+          if (p.y < gy + 0.28) { p.y = gy + 0.28; if (p.vy < 0) p.vy = -p.vy * 0.42; p.vx *= 0.78; p.vz *= 0.78; }
+          const w = wallPush(p, 0.3); if (w) { const L = Math.hypot(w.nx, w.nz) || 1, nx = w.nx / L, nz = w.nz / L, vn = p.vx * nx + p.vz * nz; if (vn < 0) { p.vx -= 1.6 * vn * nx; p.vz -= 1.6 * vn * nz; } }
+          if (p.t > 2) { boom(p.x, p.y, p.z, 8, 0.3, p.owner); dead = true; }
+        }
+        if (dead) break;
+        if (p.kind !== 'g' && wallPush({ x: p.x, z: p.z, y: p.y }, 0.25)) { if (p.kind === 'm') boom(p.x, p.y, p.z, 6, 0.25, p.owner); dead = true; break; }
+        // direct hits
+        for (const t of targetsFor(p.owner, p.kind === 'g' && p.t > 0.5)) {
+          const r = p.kind === 'b' ? 1.3 : 1.9;
+          if (Math.hypot(t.x - p.x, t.z - p.z) > r || Math.abs(t.y + 0.6 - p.y) > 2) continue;
+          if (p.kind === 'b') { if (!t.remote) hurt(t, 0.02, p.owner, p.vx / 150, p.vz / 150); }
+          else boom(p.x, p.y, p.z, p.kind === 'm' ? 6 : 8, p.kind === 'm' ? 0.3 : 0.3, p.owner, t.id);
+          dead = true; break;
+        }
+      }
+    }
+    if (dead) { scene.remove(p.m); vs.proj.splice(k, 1); continue; }
+    p.m.position.set(p.x, p.y, p.z);
+    if (p.kind === 'g') p.m.rotation.x += dt * 10; else p.m.rotation.set(0, -(p.h ?? Math.atan2(p.vx, -p.vz)), 0);
+  }
+  // explosion effects
+  for (let k = vs.fx.length - 1; k >= 0; k--) {
+    const e = vs.fx[k]; e.t += dt; const R = Math.max(3, e.R * 0.6), f = e.t / 0.55;
+    e.fire.scale.setScalar(R * (0.3 + f)); e.fire.material.opacity = Math.max(0, 1 - f);
+    e.smoke.scale.setScalar(R * (0.4 + 0.8 * f)); e.smoke.position.y += dt * 2; e.smoke.material.opacity = Math.max(0, 0.7 * (1 - e.t / 1.4));
+    if (e.t > 1.4) { scene.remove(e.fire, e.smoke); e.fire.material.dispose(); e.smoke.material.dispose(); vs.fx.splice(k, 1); }
+  }
+}
+function clearVs() {
+  for (const p of vs.proj) scene.remove(p.m); vs.proj = [];
+  for (const e of vs.fx) scene.remove(e.fire, e.smoke); vs.fx = [];
+  clearBots(); resetAmmo(); Object.assign(vs, { dead: 0, kos: 0, wrecks: 0, lastBy: null });
+}
+
 function physicsFrame(dt, inp) {
   const sp = Math.hypot(st.vx, st.vz);
   const env = groundEnv();
   const pin = { thr: inp.thr, brk: inp.brk, clu: inp.clu, ebrake: inp.ebrake, steerAngle: steerAngleFor(inp, sp) };
-  if (frozen) { pin.brk = 1; pin.ebrake = true; }
+  if (frozen || vs.dead > 0) { pin.thr = 0; pin.brk = 1; pin.ebrake = true; }
   kartFrame(dt, inp, pin, sp);
   if (kart.on) env.assist = { abs: true, tc: false, esc: false };
   if (boost.t > 0) { boost.t -= dt; if (boost.t <= 0) boost.a = 0; }
@@ -546,7 +810,7 @@ const bodyCircles = (x, z, h, len, wid, cOff) => {
 function damage(dv, lx, ly, nx, nz, kind, wx, wz) {
   if (dv <= 0) return;
   const before = st.damage;
-  st.damage = clamp(st.damage + dv * 0.024, 0, 1);
+  st.damage = clamp(st.damage + dv * 0.024 * DMG_SCALE, 0, 1);
   if (wx != null && model) { // deform near the impact point, in model space
     const v = new THREE.Vector3(wx, st.y - car.HCG + 0.6, wz); model.inner.worldToLocal(v);
     const n = new THREE.Vector3(nx, 0, nz).transformDirection(new THREE.Matrix4().extractRotation(model.inner.matrixWorld).invert());
@@ -555,6 +819,7 @@ function damage(dv, lx, ly, nx, nz, kind, wx, wz) {
   }
   if (Math.floor(st.damage * 10) > Math.floor(before * 10)) toast(`Damage ${Math.round(st.damage * 100)}%`);
   playThump(dv);
+  checkWreck();
 }
 function collide(others) {
   const cOff = car.A - car.WB / 2, len = spec.visual.length, wid = spec.visual.width, r = wid / 2;
@@ -637,8 +902,10 @@ function collide(others) {
   }
 }
 const hitCool = new Map(), pendingHits = [];
-function carDamage(pct, wx, wz, nx, nz) { // pct: 0..1 of total damage
-  if (pct <= 0.002) return;
+const DMG_SCALE = 0.5; // collision damage (walls, landings, car-to-car) is half of what it used to be
+function carDamage(pct, wx, wz, nx, nz, raw) { // pct: 0..1 of total damage; raw = weapon hit (not scaled)
+  if (!raw) pct *= DMG_SCALE;
+  if (pct <= 0.002 || vs.dead > 0) return;
   const before = st.damage;
   st.damage = clamp(st.damage + pct, 0, 1);
   if (model && wx != null) {
@@ -649,6 +916,7 @@ function carDamage(pct, wx, wz, nx, nz) { // pct: 0..1 of total damage
   }
   if (Math.floor(st.damage * 10) > Math.floor(before * 10) || pct > 0.05) toast(`Hit · +${Math.round(pct * 100)}% damage (${Math.round(st.damage * 100)}%)`);
   playThump(pct * 60);
+  checkWreck();
 }
 function onHitMsg(m) { // another driver hit us
   if (!m || m.to !== myId || !Number.isFinite(m.dmg)) return;
@@ -962,7 +1230,8 @@ function hud(inp, dt) {
   $('tNext').textContent = g ? `${run.cp === 0 ? (loop ? 'line' : 'start') : 'CP ' + run.cp} · ${Math.round(Math.hypot(g.x - st.x, g.z - st.z))} m` : '–';
   $('tDrift').textContent = bestDrift.toLocaleString();
   const ban = $('banner');
-  if (speedCap) { ban.hidden = false; ban.className = 'hud info'; ban.textContent = `PIT LANE ${Math.round(speedCap * 3.6)} KM/H`; }
+  if (vs.dead > 0) { ban.hidden = false; ban.className = 'hud'; ban.textContent = `WRECKED · respawn in ${Math.ceil(vs.dead)}`; }
+  else if (speedCap) { ban.hidden = false; ban.className = 'hud info'; ban.textContent = `PIT LANE ${Math.round(speedCap * 3.6)} KM/H`; }
   else if (darkness > 0.5) { ban.hidden = true; }
   else if (surfName === 'Grass' && mapDef.generator === 'circuit' || surfName === 'Gravel' && mapDef.generator === 'circuit') { ban.hidden = false; ban.className = 'hud'; ban.textContent = 'OFF TRACK'; }
   else ban.hidden = true;
@@ -973,6 +1242,12 @@ function hud(inp, dt) {
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').hidden = true; }
   $('itemName').textContent = items.held ? ITEM_NAMES[items.held] : '—'; $('itemSlot').className = 'slot ' + (items.held || '');
   $('nitroF').style.width = (nitro.charge * 100).toFixed(0) + '%'; $('pow').classList.toggle('ready', nitro.charge >= 1);
+  const wp = $('wpn'), on = weaponsOn(); wp.hidden = !on;
+  if (on) {
+    for (const k in WPN) { const a = vs.ammo[k], row = $('w_' + k); row.querySelectorAll('i').forEach((e, i) => e.classList.toggle('on', i < a.n)); row.querySelector('em').textContent = a.n < MAX_AMMO && a.back.length ? Math.ceil(a.back[0] - now) + 's' : ''; }
+    $('wDmg').style.width = Math.round(st.damage * 100) + '%'; $('wDmgT').textContent = Math.round(st.damage * 100) + '%';
+    $('wKo').textContent = `${vs.kos} KO · ${vs.wrecks} wrecked`;
+  }
   const kb = $('kart');
   if (boost.flash > 0 || boost.t > 0.2) { kb.hidden = false; kb.className = 'hud boost'; $('kTxt').textContent = 'BOOST'; $('kTxt').style.color = ''; kb.querySelectorAll('i').forEach(e => e.style.background = ''); }
   else if (kart.on) { kb.hidden = false; kb.className = 'hud'; $('kTxt').textContent = 'DRIFT'; $('kTxt').style.color = KCOL[kart.tier]; kb.querySelectorAll('i').forEach((e, i) => e.style.background = kart.tier > i ? KCOL[kart.tier] : ''); }
@@ -1008,6 +1283,7 @@ function minimap2(dt) {
   const dot = (x, z, r, c) => { mctx.fillStyle = c; mctx.beginPath(); mctx.arc(x, z, r / k, 0, Math.PI * 2); mctx.fill(); };
   const g = world.checkpoints[run.cp]; if (g) dot(g.x, g.z, 6, '#ffb21f');
   for (const a of traffic.list) dot(a.x, a.z, 3, '#7b8790');
+  for (const b of vs.bots) if (!(b.dead > 0)) dot(b.x, b.z, 5, '#ff4a3d');
   for (const [, gh] of ghosts) dot(gh.x, gh.z, 5, hex(gh.color));
   if (ghost && ghost.pos && ghostModel && ghostModel.group.visible) dot(ghost.pos[0], ghost.pos[1], 4, '#ffffff');
   mctx.restore();
@@ -1171,11 +1447,11 @@ function presenceList() { if (!net.ch) return []; const s = net.ch.presenceState
 function renderRoster() {
   const list = presenceList();
   list.sort((a, b) => (a.best == null) - (b.best == null) || (a.best ?? 0) - (b.best ?? 0));
-  $('roster').innerHTML = list.map(m => `<li class="${m.id === myId ? 'me' : ''}"><span class="sw" style="background:${hex(m.color)}"></span><span class="who">${esc(cleanName(m.name) || 'Driver')} <small>${esc((carById(m.car) || {}).name || '')}</small></span><b>${fmt(Number.isFinite(m.best) ? m.best : null)}</b></li>`).join('');
+  $('roster').innerHTML = list.map(m => `<li class="${m.id === myId ? 'me' : ''}"><span class="sw" style="background:${hex(m.color)}"></span><span class="who">${esc(cleanName(m.name) || 'Driver')} <small>${esc((carById(m.car) || {}).name || '')}</small></span><b>${mapDef && mapDef.mode === 'arena' ? `${+m.ko || 0} KO` : fmt(Number.isFinite(m.best) ? m.best : null)}</b></li>`).join('');
   if (net.ready) setNet('ok', `Online · ${mapDef.name.split(' ')[0]} · ${roomName() === 'main' ? '' : roomName() + ' · '}${list.length} driver${list.length === 1 ? '' : 's'}`);
   $('raceBtn').disabled = !net.ready || !!race.state;
 }
-function trackPresence() { if (!net.ready) return; net.trackT = now; net.ch.track({ id: myId, name: myName(), color: myCol(), car: spec.id, best: run.best, laps: run.laps }).catch(() => {}); }
+function trackPresence() { if (!net.ready) return; net.trackT = now; net.ch.track({ id: myId, name: myName(), color: myCol(), car: spec.id, best: run.best, laps: run.laps, ko: vs.kos, wr: vs.wrecks }).catch(() => {}); }
 function joinNet() {
   const key = `r29:${mapDef.id}:${roomName()}`;
   if (net.ch && net.key === key) return;
@@ -1190,6 +1466,8 @@ function joinNet() {
   ch.on('broadcast', { event: 'fin' }, msg => onFinish(msg && msg.payload));
   ch.on('broadcast', { event: 'hit' }, msg => onHitMsg(msg && msg.payload));
   ch.on('broadcast', { event: 'shot' }, msg => onShot(msg && msg.payload));
+  ch.on('broadcast', { event: 'wpn' }, msg => onWpn(msg && msg.payload));
+  ch.on('broadcast', { event: 'ko' }, msg => onKo(msg && msg.payload));
   ch.on('presence', { event: 'sync' }, renderRoster);
   ch.on('presence', { event: 'leave' }, ({ key: k }) => removeGhost(k));
   ch.subscribe(status => {
@@ -1293,9 +1571,20 @@ function placeModelAndCamera(dt) {
   const sp = Math.hypot(st.vx, st.vz);
   model.spin(st.wr * car.RW * dt); model.steer(lastInp.steerAngle || 0);
   const bump = (surfName !== 'Asphalt' && surfName !== 'Concrete' && surfName !== 'Curb') && !reduceMotion ? (Math.random() - 0.5) * Math.min(sp, 20) * 0.003 : 0;
-  model.group.visible = cfg.cam !== 'cockpit';
+  model.group.visible = cfg.cam !== 'cockpit' && !(vs.dead > 0);
   $('wheel').style.visibility = cfg.cam === 'chase' ? 'hidden' : '';
-  if (cfg.cam === 'chase') {
+  const lookBack = padLook || keys.has('AltLeft') || keys.has('AltRight');
+  if (lookBack) { // rear view: from just above the front of the car, looking back past it
+    chase = null;
+    if (cfg.cam === 'chase') { // camera out in front, looking back over the car
+      model.group.visible = !(vs.dead > 0);
+      cam.position.set(st.x + fx * 7.2, groundY + 3.1, st.z + fz * 7.2); cam.lookAt(st.x - fx * 3, groundY + 1, st.z - fz * 3);
+    } else { // rear-view from the back of the car
+      model.group.visible = false;
+      eul.set(-(smPitch + bodyP * 0.6), -st.h + Math.PI, -(smRoll + bodyR * 0.6)); q1.setFromEuler(eul);
+      const r = car.B + 0.4; cam.position.set(st.x - fx * r, groundY + spec.physics.eye_height_m, st.z - fz * r); cam.quaternion.copy(q1);
+    }
+  } else if (cfg.cam === 'chase') {
     const want = v1.set(st.x - fx * 7.2, groundY + 3.1, st.z - fz * 7.2);
     if (!chase || chase.distanceTo(want) > 25) chase = want.clone(); else chase.lerp(want, 1 - Math.exp(-dt * 6));
     const gy = world.ground(chase.x, chase.z, chase.y).h; if (chase.y < gy + 1) chase.y = gy + 1;
@@ -1427,9 +1716,9 @@ $('mapGo').onclick = async () => {
 };
 function renderSettings() {
   $('sTc').value = cfg.tc; $('sTcV').textContent = cfg.tc ? cfg.tc + '/10' : 'OFF';
-  $('sKart').value = String(cfg.kart ? 1 : 0); $('sAssist').value = cfg.assist; $('sShift').value = cfg.shift; $('sCam').value = cfg.cam; $('sSeat').value = cfg.seat; $('sGhost').value = String(cfg.ghost); $('sMini').value = String(cfg.mini); $('sQual').value = cfg.qual;
+  $('sWeapons').value = cfg.weapons || 'vs'; $('sBots').value = String(cfg.bots ?? 3); $('sKart').value = String(cfg.kart ? 1 : 0); $('sAssist').value = cfg.assist; $('sShift').value = cfg.shift; $('sCam').value = cfg.cam; $('sSeat').value = cfg.seat; $('sGhost').value = String(cfg.ghost); $('sMini').value = String(cfg.mini); $('sQual').value = cfg.qual;
 }
-for (const [id, key, num] of [['sKart', 'kart', 1], ['sAssist', 'assist'], ['sShift', 'shift'], ['sCam', 'cam'], ['sSeat', 'seat', 1], ['sGhost', 'ghost', 1], ['sMini', 'mini', 1], ['sQual', 'qual']])
+for (const [id, key, num] of [['sWeapons', 'weapons'], ['sBots', 'bots', 1], ['sKart', 'kart', 1], ['sAssist', 'assist'], ['sShift', 'shift'], ['sCam', 'cam'], ['sSeat', 'seat', 1], ['sGhost', 'ghost', 1], ['sMini', 'mini', 1], ['sQual', 'qual']])
   $(id).addEventListener(id === 'sSeat' ? 'input' : 'change', e => { cfg[key] = num ? +e.target.value : e.target.value; save(); if (key === 'qual') toast('Quality applies after reloading the page'); });
 function renderLbScreen() {
   $('lbMap').innerHTML = MAPS.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join(''); $('lbMap').value = cfg.mapId;
@@ -1486,8 +1775,8 @@ function update(dt) {
   const px = st.x, pz = st.z;
   physicsFrame(dt, inp);
   updateTraffic(dt);
-  const others = traffic.list.slice(); for (const [, gh] of ghosts) others.push({ key: gh.id, remote: true, x: gh.x, z: gh.z, y: gh.y + car.HCG, h: gh.h, vx: gh.vx, vz: gh.vz, len: gh.len, wid: gh.wid, mass: gh.mass });
-  collide(others); flushPendingHits(); boostPads(); updateItems(dt);
+  const others = traffic.list.slice(); for (const b of vs.bots) if (!(b.dead > 0)) others.push({ key: b, x: b.x, z: b.z, y: b.y + car.HCG, h: b.h, vx: b.vx, vz: b.vz, len: b.len, wid: b.wid, mass: b.mass, onHit: (hit) => { b.v *= 0.4; b.x -= hit.nx * 0.3; b.z -= hit.nz * 0.3; } }); for (const [, gh] of ghosts) others.push({ key: gh.id, remote: true, x: gh.x, z: gh.z, y: gh.y + car.HCG, h: gh.h, vx: gh.vx, vz: gh.vz, len: gh.len, wid: gh.wid, mass: gh.mass });
+  collide(others); flushPendingHits(); boostPads(); updateItems(dt); updateVs(dt);
   if (!frozen) checkGates(px, pz);
   recordGhost(dt); driftUpdate(dt); skids();
   updatePanel(inp.gp); hud(inp, dt); updateAudio(inp); netTick(dt); raceTick();
@@ -1529,7 +1818,7 @@ window.__qa = {
   input: o => { qaInput = o; }, cam: c => { cfg.cam = c; }, auto: mph => { qaAuto = (mph || 0) * MPH; },
   place: sp => { placeAt(sp); return window.__qa.snap(); },
   world: () => world, run: () => run, hour: h => { hour = h; },
-  give: it => { items.held = it; }, useItem: () => useItem(), useNitro: () => useNitro(), shot: o => onShot(o),
+  give: it => { items.held = it; }, fire: k => fireWeapon(k), vs: () => ({ kos: vs.kos, wrecks: vs.wrecks, dead: vs.dead, proj: vs.proj.length, bots: vs.bots.map(b => [Math.round(b.x), Math.round(b.z), +b.dmg.toFixed(2), b.dead > 0]), ammo: Object.fromEntries(Object.entries(vs.ammo).map(([k, a]) => [k, a.n])) }), hurtMe: d => { carDamage(d, null, null, 0, 0, true); }, killBots: () => vs.bots.forEach(b => { b.lastBy = myId; botWreck(b); }), setCfg: o => Object.assign(cfg, o), useItem: () => useItem(), useNitro: () => useNitro(), shot: o => onShot(o),
   advance: sec => { for (let t = 0; t < sec - 1e-9; t += 1 / 60) update(1 / 60); return window.__qa.snap(); },
 };
 })();

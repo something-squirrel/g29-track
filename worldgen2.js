@@ -777,10 +777,129 @@ function genBeach(W, map) {
   W.outOfBounds = (x, z, q) => !q || q.d > 450;
 }
 
+/* =================== VS arenas =================== */
+// Walled battle arenas for weapons play: cover, ramps, boost pads, item boxes, spawn points facing the middle.
+function genArena(W, map) {
+  const g = map.gen, rnd = W.rand, lay = g.layout;
+  W.flat = true; W.base = () => 0; W.offSurface = () => g.surface || 'concrete';
+  const mats = {
+    wall: new THREE.MeshLambertMaterial({ color: g.wallColor || 0x6d737a }),
+    top: new THREE.MeshLambertMaterial({ color: 0xd9a21f }),
+    pillar: new THREE.MeshLambertMaterial({ color: 0x8c9196 }),
+  };
+  const conCols = [0xb8432e, 0x2e6fb8, 0x3f8a4a, 0xd9a21f, 0x7a4fa8, 0xd0d4d8, 0xc96a2a];
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshLambertMaterial({ map: (() => { const t = (g.surface === 'asphalt' ? tex.asphalt() : tex.concrete()).clone(); t.needsUpdate = true; t.repeat.set(220, 220); return t; })(), color: g.groundTint || 0xffffff }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; W.group.add(ground);
+  const mm = (pts, w = 2) => W.minimapLines.push({ pts: new Float32Array(pts), w, kind: 'road' });
+  const wallBox = (x0, z0, x1, z1, h, mat = mats.wall) => { boxMesh(W, x0, z0, x1, z1, 0, h, mat); W.cols.box(x0, z0, x1, z1, { kind: 'wall', y0: -1, y1: h }); mm([x0, (z0 + z1) / 2, x1, (z0 + z1) / 2], Math.max(1.5, z1 - z0)); };
+  const container = (cx, cz, rot, levels = 1) => { // 12.2 x 2.45 m shipping container stack
+    const L = 12.2, Wd = 2.45, hx = rot ? Wd / 2 : L / 2, hz = rot ? L / 2 : Wd / 2;
+    for (let k = 0; k < levels; k++) boxMesh(W, cx - hx, cz - hz, cx + hx, cz + hz, k * 2.6, k * 2.6 + 2.55, new THREE.MeshLambertMaterial({ color: conCols[Math.floor(rnd() * conCols.length)] }));
+    W.cols.box(cx - hx, cz - hz, cx + hx, cz + hz, { kind: 'building', y0: -1, y1: levels * 2.6 });
+    mm([cx - hx, cz, cx + hx, cz], hz * 2);
+  };
+  const pillar = (x, z, r = 1.2, h = 7) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 12), mats.pillar); m.position.set(x, h / 2, z); W.group.add(m); W.cols.circ(x, z, r, { kind: 'pole', y0: -1, y1: h }); };
+  // raised platform with ramps up from the given sides ('n','s','e','w'); walls on the rest of each edge
+  const table = (cx, cz, half, h, rampLen, rampHalf, sides) => {
+    addRamp(W, { axis: null, x0: cx - half, x1: cx + half, z0: cz - half, z1: cz + half, ya: h, open: ['x0', 'x1', 'z0', 'z1'] });
+    const edge = (ax, az, bx, bz) => W.cols.seg(ax, az, bx, bz, { kind: 'wall', y0: -1, y1: h - 0.3 });
+    const spans = (a0, a1, has) => has ? [[a0, -rampHalf], [rampHalf, a1]] : [[a0, a1]];
+    for (const [a, b] of spans(-half, half, sides.includes('n'))) edge(cx + a, cz - half, cx + b, cz - half);
+    for (const [a, b] of spans(-half, half, sides.includes('s'))) edge(cx + a, cz + half, cx + b, cz + half);
+    for (const [a, b] of spans(-half, half, sides.includes('w'))) edge(cx - half, cz + a, cx - half, cz + b);
+    for (const [a, b] of spans(-half, half, sides.includes('e'))) edge(cx + half, cz + a, cx + half, cz + b);
+    if (sides.includes('n')) addRamp(W, { axis: 'z', x0: cx - rampHalf, x1: cx + rampHalf, z0: cz - half - rampLen, z1: cz - half, ya: 0, yb: h, open: ['z1'] });
+    if (sides.includes('s')) addRamp(W, { axis: 'z', x0: cx - rampHalf, x1: cx + rampHalf, z0: cz + half, z1: cz + half + rampLen, ya: h, yb: 0, open: ['z0'] });
+    if (sides.includes('w')) addRamp(W, { axis: 'x', x0: cx - half - rampLen, x1: cx - half, z0: cz - rampHalf, z1: cz + rampHalf, ya: 0, yb: h, open: ['x1'] });
+    if (sides.includes('e')) addRamp(W, { axis: 'x', x0: cx + half, x1: cx + half + rampLen, z0: cz - rampHalf, z1: cz + rampHalf, ya: h, yb: 0, open: ['x0'] });
+    mm([cx - half, cz, cx + half, cz], half * 2);
+  };
+  const kicker = (x, z, h, len = 7, wid = 3) => { // h: heading the car drives up it
+    const fx = Math.round(Math.sin(h)), fz = Math.round(-Math.cos(h));
+    if (fx) { const [a, b] = [x, x + fx * len].sort((p, q) => p - q); addRamp(W, { axis: 'x', x0: a, x1: b, z0: z - wid, z1: z + wid, ya: fx > 0 ? 0 : 1.4, yb: fx > 0 ? 1.4 : 0 }); }
+    else { const [a, b] = [z, z + fz * len].sort((p, q) => p - q); addRamp(W, { axis: 'z', x0: x - wid, x1: x + wid, z0: a, z1: b, ya: fz > 0 ? 0 : 1.4, yb: fz > 0 ? 1.4 : 0 }); }
+  };
+  const spawns = [], items = [], bots = [];
+  const spawnAt = (x, z, label) => spawns.push({ x, z, y: 0, h: Math.atan2(-x, z), label }); // facing the middle
+
+  if (lay === 'bowl') {
+    const R = 115, n = 72;
+    for (let k = 0; k < n; k++) { // ring wall made of short straight panels
+      const a0 = k / n * Math.PI * 2, a1 = (k + 1) / n * Math.PI * 2;
+      const ax = Math.cos(a0) * R, az = Math.sin(a0) * R, bx = Math.cos(a1) * R, bz = Math.sin(a1) * R;
+      W.cols.seg(ax, az, bx, bz, { kind: 'wall' });
+      const m = new THREE.Mesh(new THREE.BoxGeometry(Math.hypot(bx - ax, bz - az) + 0.3, 4.5, 1.2), k % 2 ? mats.wall : new THREE.MeshLambertMaterial({ color: 0xc23b2e }));
+      m.position.set((ax + bx) / 2, 2.25, (az + bz) / 2); m.rotation.y = -Math.atan2(bz - az, bx - ax); W.group.add(m);
+    }
+    const ring = []; for (let k = 0; k <= 72; k++) ring.push(Math.cos(k / 72 * Math.PI * 2) * R, Math.sin(k / 72 * Math.PI * 2) * R); mm(ring, 3);
+    table(0, 0, 15, 3.2, 18, 6, ['n', 's', 'e', 'w']);
+    for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + k * Math.PI / 2; container(Math.cos(a) * 62, Math.sin(a) * 62, k % 2, 2); container(Math.cos(a) * 62 + Math.sin(a) * 5, Math.sin(a) * 62 - Math.cos(a) * 5, k % 2, 1); }
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2 + Math.PI / 8; pillar(Math.cos(a) * 88, Math.sin(a) * 88, 1.6, 8); }
+    for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; addBoostPad(W, Math.cos(a) * 42, Math.sin(a) * 42, a + Math.PI, 8, 5); }
+    for (const [x, z, h] of [[-75, 0, Math.PI / 2], [75, 0, -Math.PI / 2], [0, -75, Math.PI], [0, 75, 0]]) kicker(x, z, h);
+    for (const [lab, a] of [['North', -Math.PI / 2], ['East', 0], ['South', Math.PI / 2], ['West', Math.PI]]) spawnAt(Math.cos(a) * 100, Math.sin(a) * 100, lab);
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2 + Math.PI / 8; spawnAt(Math.cos(a) * 100, Math.sin(a) * 100, 'Spawn ' + (k + 5)); }
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; items.push([Math.cos(a) * 30 + Math.cos(a + 1.57) * 0, Math.sin(a) * 30]); items.push([Math.cos(a) * 52, Math.sin(a) * 52]); }
+    for (let k = 0; k < 12; k++) { const a = k / 12 * Math.PI * 2; bots.push([Math.cos(a) * 75, Math.sin(a) * 75]); }
+    W.arena = { R };
+  }
+  if (lay === 'docks') {
+    const X = 140, Z = 95;
+    wallBox(-X - 2, -Z - 2, X + 2, -Z, 3); wallBox(-X - 2, -Z, -X, Z + 2, 3); wallBox(X, -Z, X + 2, Z + 2, 3);
+    wallBox(-X, Z, X, Z + 1, 1.1, new THREE.MeshLambertMaterial({ color: 0xe0c23a })); // quay edge
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(1400, 600), new THREE.MeshPhongMaterial({ color: 0x24607a, shininess: 80 })); sea.rotation.x = -Math.PI / 2; sea.position.set(0, 0.02, Z + 301); W.group.add(sea);
+    // container rows with gaps (alleys), stacked 1-3 high
+    for (const z of [-62, -28, 28, 62]) for (let x = -120; x <= 120; x += 14) { if (rnd() < 0.32 || Math.abs(x) < 20) continue; container(x, z, 0, 1 + Math.floor(rnd() * 3)); }
+    for (const x of [-100, -50, 50, 100]) for (const z of [-45, 45]) if (rnd() < 0.7) container(x, z, 1, 1 + Math.floor(rnd() * 2));
+    // gantry cranes along the quay
+    for (const x of [-90, 0, 90]) {
+      const cr = new THREE.MeshLambertMaterial({ color: 0xd9541f });
+      for (const [dx, dz] of [[-8, 70], [8, 70], [-8, 88], [8, 88]]) { boxMesh(W, x + dx - 0.7, dz - 0.7, x + dx + 0.7, dz + 0.7, 0, 26, cr); W.cols.box(x + dx - 0.7, dz - 0.7, x + dx + 0.7, dz + 0.7, { kind: 'pole' }); }
+      boxMesh(W, x - 9, 68, x + 9, 90, 26, 28.5, cr); boxMesh(W, x - 1.5, 40, x + 1.5, 110, 28.5, 30, cr);
+    }
+    table(0, 0, 12, 3.2, 16, 5.5, ['w', 'e']);
+    for (const [x, z, h] of [[-110, -45, Math.PI / 2], [110, 45, -Math.PI / 2], [-60, 10, Math.PI / 2], [60, -10, -Math.PI / 2]]) kicker(x, z, h);
+    addBoostPad(W, -60, -45, Math.PI / 2, 8, 5); addBoostPad(W, 60, 45, -Math.PI / 2, 8, 5); addBoostPad(W, -35, 0, Math.PI / 2, 8, 5); addBoostPad(W, 35, 0, -Math.PI / 2, 8, 5);
+    spawnAt(-125, -80, 'North-west'); spawnAt(125, -80, 'North-east'); spawnAt(125, 80, 'Quay east'); spawnAt(-125, 80, 'Quay west');
+    for (const [x, z] of [[0, -82], [0, 82], [-125, 0], [125, 0], [-70, -80], [70, 80], [70, -80], [-70, 80]]) spawnAt(x, z, 'Spawn');
+    for (const [x, z] of [[-90, -45], [90, -45], [-90, 45], [90, 45], [0, -45], [0, 45], [-125, -45], [125, 45], [-30, 80], [30, -80]]) items.push([x, z]);
+    for (const x of [-120, -80, -40, 40, 80, 120]) for (const z of [-45, 0, 45, -80, 80]) bots.push([x, z]);
+    W.arena = { X, Z };
+  }
+  if (lay === 'stadium') {
+    const X = 110, Z = 65;
+    wallBox(-X - 2, -Z - 2, X + 2, -Z, 4); wallBox(-X - 2, Z, X + 2, Z + 2, 4); wallBox(-X - 2, -Z, -X, Z, 4); wallBox(X, -Z, X + 2, Z, 4);
+    for (const s of [-1, 1]) for (let t = 0; t < 6; t++) boxMesh(W, -X, s * (Z + 2 + t * 3), X, s * (Z + 2 + t * 3) + s * 3, 0, 4 + t * 2.4, new THREE.MeshLambertMaterial({ color: t % 2 ? 0x2e5ea8 : 0x9aa2aa }));
+    // the big central jump: up from the west, table, down to the east, and the reverse lane beside it
+    for (const [dir, z] of [[1, -12], [-1, 12]]) {
+      const up0 = -dir * 34;
+      const [a, b] = [up0, up0 + dir * 20].sort((p, q) => p - q), [c, d] = [up0 + dir * 20, up0 + dir * 34].sort((p, q) => p - q), [e, f] = [up0 + dir * 34, up0 + dir * 62].sort((p, q) => p - q);
+      addRamp(W, { axis: 'x', x0: a, x1: b, z0: z - 7, z1: z + 7, ya: dir > 0 ? 0 : 4, yb: dir > 0 ? 4 : 0, open: [dir > 0 ? 'x1' : 'x0'] });
+      addRamp(W, { axis: null, x0: c, x1: d, z0: z - 7, z1: z + 7, ya: 4, open: ['x0', 'x1'] });
+      addRamp(W, { axis: 'x', x0: e, x1: f, z0: z - 7, z1: z + 7, ya: dir > 0 ? 4 : 0, yb: dir > 0 ? 0 : 4, open: [dir > 0 ? 'x0' : 'x1'] });
+      addBoostPad(W, up0 - dir * 18, z, dir > 0 ? Math.PI / 2 : -Math.PI / 2, 8, 6);
+      mm([-34, z, 34, z], 14);
+    }
+    for (const [x, z, h] of [[-85, -45, Math.PI / 2], [85, 45, -Math.PI / 2], [-85, 45, Math.PI / 2], [85, -45, -Math.PI / 2]]) kicker(x, z, h, 8, 3.5);
+    for (const [x, z] of [[-55, -42], [55, 42], [-55, 42], [55, -42], [0, -48], [0, 48]]) pillar(x, z, 1.4, 6);
+    container(-75, 0, 1, 1); container(75, 0, 1, 1);
+    spawnAt(-100, -50, 'West 1'); spawnAt(100, 50, 'East 1'); spawnAt(-100, 50, 'West 2'); spawnAt(100, -50, 'East 2');
+    for (const [x, z] of [[-100, 0], [100, 0], [0, -58], [0, 58], [-50, -58], [50, 58], [-50, 58], [50, -58]]) spawnAt(x, z, 'Spawn');
+    for (const [x, z] of [[-60, 0], [60, 0], [0, -35], [0, 35], [-30, -50], [30, 50], [-95, -25], [95, 25]]) items.push([x, z]);
+    for (const x of [-95, -60, -20, 20, 60, 95]) for (const z of [-50, -30, 30, 50]) bots.push([x, z]);
+    W.arena = { X, Z };
+  }
+  W.spawns = spawns; W.grid = spawns.slice(0, 12);
+  W.itemSpots = items.map(([x, z]) => ({ x, z, y: 0 }));
+  W.botPoints = bots;
+  W.checkpoints = []; W.laps = 1;
+  W.outOfBounds = () => false;
+}
+
 /* =================== build entry =================== */
 function build(map, opts) {
   const W = newWorld(map, opts);
-  ({ coast: Gn.genCoast, mountain: Gn.genMountain, circuit: genCircuit, testtrack: genTestTrack, desert: genDesert, city: genCity, oval: genOval, beach: genBeach })[map.generator](W, map);
+  ({ coast: Gn.genCoast, mountain: Gn.genMountain, circuit: genCircuit, testtrack: genTestTrack, desert: genDesert, city: genCity, oval: genOval, beach: genBeach, arena: genArena })[map.generator](W, map);
   if (!W.minimapLines.length) minimapFrom(W);
   return W;
 }

@@ -64,6 +64,15 @@ body.inmenu .hud{opacity:0;pointer-events:none}
 #pow .nbar{width:90px;height:8px;border-radius:4px;background:rgba(255,255,255,.15);overflow:hidden}
 #pow #nitroF{height:100%;background:#3fb4ff;width:100%}
 #pow.ready #nitroF{background:#5ef2ff;box-shadow:0 0 8px #5ef2ff}
+#wpn{position:fixed;top:calc(140px + env(safe-area-inset-top,0px));right:12px;width:190px;padding:10px 12px;border-radius:6px;background:rgba(10,14,18,.72);font-size:12px;font-weight:700;letter-spacing:.1em;pointer-events:none}
+#wpn .w{display:flex;align-items:center;gap:6px;margin:3px 0}
+#wpn .w span{flex:1} #wpn .w small{opacity:.55;font-weight:600}
+#wpn .w i{width:12px;height:12px;border-radius:50%;background:rgba(255,255,255,.15)}
+#wpn .w i.on{background:#ffb21f;box-shadow:0 0 6px #ffb21f}
+#wpn .w em{width:3ch;text-align:right;font-style:normal;opacity:.7;font-variant-numeric:tabular-nums}
+#wpn .dmg{margin-top:8px;height:8px;border-radius:4px;background:rgba(255,255,255,.15);overflow:hidden}
+#wpn #wDmg{height:100%;background:linear-gradient(90deg,#ffb21f,#ff3326);width:0}
+#wpn .row2{display:flex;justify-content:space-between;margin-top:4px;opacity:.85}
 #kart .pips{display:flex;gap:4px}
 #kart .pips i{width:22px;height:8px;border-radius:2px;background:rgba(255,255,255,.18)}
 #kart.boost{font-size:22px;color:#ffd23a}
@@ -201,6 +210,14 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
 <div id="banner" class="hud" hidden>OFF TRACK</div>
 <div id="drift" class="hud" hidden><span class="big" id="dScore">0</span><span class="sub" id="dSub">DRIFT</span></div>
 <div id="pow" class="hud"><div class="slot" id="itemSlot"><span id="itemName">—</span><small>E</small></div><div class="nitro"><span>NITRO<small>N</small></span><div class="nbar"><div id="nitroF"></div></div></div></div>
+<div id="wpn" class="hud" hidden>
+  <div class="w" id="w_gun"><span>GUN <small>F</small></span><i></i><i></i><i></i><em></em></div>
+  <div class="w" id="w_mis"><span>MISSILE <small>G</small></span><i></i><i></i><i></i><em></em></div>
+  <div class="w" id="w_gre"><span>GRENADE <small>H</small></span><i></i><i></i><i></i><em></em></div>
+  <div class="dmg"><div id="wDmg"></div></div>
+  <div class="row2"><span>DAMAGE <b id="wDmgT">0%</b></span></div>
+  <div class="row2"><span id="wKo">0 KO</span></div>
+</div>
 <div id="kart" class="hud" hidden><span id="kTxt">DRIFT</span><span class="pips"><i></i><i></i><i></i></span></div>
 <div id="toast" class="hud" hidden></div>
 <div id="countdown" hidden></div>
@@ -230,7 +247,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
   </section>
   <section><h3>Button binds</h3><div class="map" id="binds"></div></section>
   <p class="note">To bind, click Bind and press the wheel button you want. To detect a pedal, click Detect, then press that pedal all the way and let go within 3 seconds.</p>
-  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto/manual, <kbd>[</kbd><kbd>]</kbd> traction control, <kbd>C</kbd> camera, <kbd>R</kbd> reset to road, <kbd>Shift</kbd> kart drift (hold), <kbd>N</kbd> nitro, <kbd>E</kbd> use item, <kbd>K</kbd> kart drift on/off, <kbd>Esc</kbd> menu.</p>
+  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto/manual, <kbd>[</kbd><kbd>]</kbd> traction control, <kbd>C</kbd> camera, <kbd>Alt</kbd> look back (hold), <kbd>R</kbd> reset to road, <kbd>Shift</kbd> kart drift (hold), <kbd>N</kbd> nitro, <kbd>E</kbd> use item, <kbd>F</kbd>/<kbd>1</kbd> gun, <kbd>G</kbd>/<kbd>2</kbd> missile, <kbd>H</kbd>/<kbd>3</kbd> grenade, <kbd>K</kbd> kart drift on/off, <kbd>Esc</kbd> menu.</p>
   <button type="button" id="closeSetup">Close</button>
 </aside>
 
@@ -327,6 +344,8 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
         <label for="sGhost">Ghost</label><select id="sGhost"><option value="1">Show my best-lap ghost</option><option value="0">Hide</option></select>
         <label for="sMini">Minimap</label><select id="sMini"><option value="1">Show</option><option value="0">Hide</option></select>
         <label for="sKart">Kart drift</label><select id="sKart"><option value="1">On · hold Shift / drift button / e-brake while steering (K)</option><option value="0">Off · sim handbrake only</option></select>
+        <label for="sWeapons">Weapons</label><select id="sWeapons"><option value="vs">VS maps only</option><option value="all">Every map</option><option value="off">Off</option></select>
+        <label for="sBots">Practice bots</label><select id="sBots"><option value="0">None</option><option value="3">3 (when you're alone on a VS map)</option><option value="6">6</option></select>
         <label for="sQual">Quality</label><select id="sQual"><option value="high">High</option><option value="low">Low (faster)</option></select>
       </div>
       <div class="foot"><button type="button" class="back">Back</button></div>
