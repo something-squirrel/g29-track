@@ -15,12 +15,12 @@ const DEF = { steerAxis: 0, steerInvert: false, rotation: 900, deadzone: 0.015,
   thr: { axis: 2, rest: 1, pressed: -1 }, brk: { axis: 5, rest: 1, pressed: -1 }, clu: { axis: 1, rest: 1, pressed: -1 },
   upBtn: 4, downBtn: 5, ebrakeBtn: 7, resetBtn: 0, modeBtn: 3, camBtn: 2, menuBtn: 9, tcUpBtn: 19, tcDownBtn: 20, tc: 7, shiftByCar: {},
   carId: 'vesper-s4', mapId: 'redline', weather: {}, time: {}, traffic: 'map', mode: 'free', laps: 3,
-  assist: 'full', shift: 'car', cam: 'cockpit', seat: 0, ghost: 1, mini: 1, qual: 'high', name: '', room: '' };
+  assist: 'full', shift: 'car', cam: 'cockpit', seat: 0, ghost: 1, mini: 1, qual: 'high', name: '', room: '', kart: 1, driftBtn: 6, paint: {} };
 let cfg = JSON.parse(JSON.stringify(DEF));
 try { const old = JSON.parse(localStorage.getItem('g29track.v1') || 'null'); if (old) for (const k of ['steerAxis', 'steerInvert', 'rotation', 'thr', 'brk', 'clu', 'upBtn', 'downBtn', 'ebrakeBtn', 'resetBtn']) if (old[k] != null) cfg[k] = old[k]; } catch (e) {}
 try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s) cfg = Object.assign(cfg, s); } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} };
-const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −']];
+const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −'], ['driftBtn', 'Kart drift (hold)']];
 if (!VEH.find(v => v.id === cfg.carId)) cfg.carId = VEH[0].id;
 if (!MAPS.find(m => m.id === cfg.mapId)) cfg.mapId = MAPS[0].id;
 try { const n = localStorage.getItem('g29track.name'); if (n && !cfg.name) cfg.name = n; } catch (e) {}
@@ -91,6 +91,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyT') toggleShift();
   if (e.code === 'BracketRight' || e.code === 'Equal') tcAdjust(1);
   if (e.code === 'BracketLeft' || e.code === 'Minus') tcAdjust(-1);
+  if (e.code === 'KeyK') { cfg.kart = cfg.kart ? 0 : 1; save(); toast(cfg.kart ? 'Kart drift ON · hold Shift (or the e-brake) while steering' : 'Kart drift OFF · e-brake works normally'); }
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -110,7 +111,7 @@ function pedal(gp, c) {
 }
 function readInput(dt) {
   const gp = getPad();
-  const inp = { steer: 0, thr: 0, brk: 0, clu: 0, ebrake: false, gp, wheel: false };
+  const inp = { steer: 0, thr: 0, brk: 0, clu: 0, ebrake: false, drift: false, gp, wheel: false };
   if (gp) {
     gp.axes.forEach((v, i) => { if (v !== 0) moved.add(i); });
     let s = gp.axes[cfg.steerAxis] || 0; if (cfg.steerInvert) s = -s;
@@ -131,6 +132,7 @@ function readInput(dt) {
         if (edge(cfg.tcUpBtn)) tcAdjust(1);
         if (edge(cfg.tcDownBtn)) tcAdjust(-1);
         inp.ebrake = !!b[cfg.ebrakeBtn];
+        inp.drift = !!b[cfg.driftBtn];
       }
     }
     prevBtns = b;
@@ -143,6 +145,7 @@ function readInput(dt) {
   if (keys.has('KeyW')) inp.thr = 1;
   if (keys.has('KeyS')) inp.brk = 1;
   if (keys.has('Space')) inp.ebrake = true;
+  if (keys.has('ShiftLeft') || keys.has('ShiftRight')) inp.drift = true;
   return inp;
 }
 
@@ -238,9 +241,12 @@ const shiftFor = id => (cfg.shiftByCar || {})[id] || (cfg.shift !== 'car' ? cfg.
 const autoShiftOn = () => shiftFor(spec.id) === 'auto';
 let paddleHold = 0;
 
+const paintFor = id => (cfg.paint || {})[id] || {};
 function makeModelFor(sp, opts = {}) {
-  const c = P.createCar(sp);
-  return CARS.makeCarModel(Object.assign({}, sp.visual, opts.color != null ? { color: opts.color } : {}), { ghost: !!opts.ghost, cgFromFront: c.A * (sp.visual.wheelbase / c.WB) });
+  const c = P.createCar(sp), mine = !opts.ghost && opts.color == null ? paintFor(sp.id) : null;
+  const color = opts.color != null ? opts.color : mine && mine.color != null ? mine.color : null;
+  const decal = opts.decal || (mine && mine.decal ? { style: mine.decal, color: mine.dcolor ?? 0xffffff, num: mine.num ?? 29 } : null);
+  return CARS.makeCarModel(Object.assign({}, sp.visual, color != null ? { color } : {}), { ghost: !!opts.ghost, decal, cgFromFront: c.A * (sp.visual.wheelbase / c.WB) });
 }
 function setCar(id, keepPose) {
   const pose = keepPose && st ? { x: st.x, z: st.z, y: st.y - car.HCG, h: st.h } : null;
@@ -353,20 +359,69 @@ function toggleShift() {
 function tcAdjust(d) { cfg.tc = clamp((cfg.tc ?? 7) + d, 0, 10); save(); toast(cfg.tc === 0 ? 'Traction control OFF' : `Traction control ${cfg.tc}/10${cfg.tc === 7 ? ' (factory)' : cfg.tc > 7 ? ' — more grip, less wheelspin' : ' — more wheelspin allowed'}`, 1.4); if ($('sTc')) $('sTc').value = cfg.tc; }
 function cycleCam() { const o = ['cockpit', 'hood', 'chase']; cfg.cam = o[(o.indexOf(cfg.cam) + 1) % 3]; save(); }
 
+/* ---------- kart drift and boosts ----------
+ * Arcade layer on top of the sim. Hold the drift button (Shift, a bound wheel button, or the e-brake) while steering
+ * at speed: the car slides at a fixed angle around a radius you tighten or widen with the steering, holding its speed.
+ * Holding the drift charges a mini-turbo (blue → orange → purple); letting go fires it. Boost pads give a boost too. */
+const kart = { on: false, dir: 0, vh: 0, sp: 0, charge: 0, tier: 0, steer: 0 };
+const boost = { t: 0, a: 0, flash: 0 };
+const KT = [0, 0.75, 1.9, 3.3], KB = [[0, 0], [0.7, 7], [1.2, 8], [1.9, 9.5]], KCOL = ['#fff', '#3fb4ff', '#ff8a1f', '#c45cff'];
+const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
+function fireBoost(sec, a) { boost.t = Math.max(boost.t, sec); boost.a = Math.max(boost.a, a); boost.flash = 0.5; }
+function kartFrame(dt, inp, pin, sp) {
+  const sN = clamp(pin.steerAngle / car.maxSteer, -1, 1);
+  const want = !!cfg.kart && !frozen && st.gear > 0 && (inp.drift || inp.ebrake);
+  if (!kart.on) {
+    if (want && sp > 11 && Math.abs(sN) > 0.18 && st.contact) Object.assign(kart, { on: true, dir: Math.sign(sN), vh: Math.atan2(st.vx, -st.vz), sp, charge: 0, tier: 0 });
+  } else {
+    const hit = sp < kart.sp - 3;
+    if (!want || sp < 7 || hit) {
+      if (!want && !hit && kart.tier) { const [sec, a] = KB[kart.tier]; fireBoost(sec, a); }
+      kart.on = false; kart.tier = 0; kart.charge = 0;
+    } else if (st.contact) {
+      kart.charge += dt * (0.55 + 0.9 * Math.max(0, sN * kart.dir));
+      kart.tier = kart.charge > KT[3] ? 3 : kart.charge > KT[2] ? 2 : kart.charge > KT[1] ? 1 : 0;
+    }
+  }
+  kart.steer = sN;
+  if (kart.on) pin.ebrake = false; // the drift replaces the handbrake lock
+}
+function kartSub(h) {
+  if (boost.t > 0 && st.contact) { const a = boost.a * h; st.vx += Math.sin(st.h) * a; st.vz -= Math.cos(st.h) * a; }
+  if (!kart.on || !st.contact) return;
+  const k = clamp(0.5 + 0.5 * kart.steer * kart.dir, 0, 1), R = lerp(Math.max(34, kart.sp * 3.2), Math.max(11, kart.sp * 1.1), k), rt = kart.dir * kart.sp / R;
+  kart.vh += rt * h;
+  const proj = st.vx * Math.sin(kart.vh) - st.vz * Math.cos(kart.vh);
+  kart.sp = clamp(proj, kart.sp - 1.6 * h, kart.sp + 8 * h);
+  st.vx = Math.sin(kart.vh) * kart.sp; st.vz = -Math.cos(kart.vh) * kart.sp;
+  st.r = rt + clamp(wrapA(kart.vh + kart.dir * 0.42 - st.h) * 7, -2.5, 2.5);
+}
+function boostPads() {
+  if (!world.boostPads) return;
+  for (const p of world.boostPads) {
+    const dx = st.x - p.x, dz = st.z - p.z, f = dx * Math.sin(p.h) - dz * Math.cos(p.h), l = dx * Math.cos(p.h) + dz * Math.sin(p.h);
+    if (Math.abs(f) < p.len / 2 && Math.abs(l) < p.wid / 2 + 0.4 && Math.abs(st.y - car.HCG - p.y) < 1.2) { if (boost.t < 0.9) playThump(1.5); fireBoost(1.1, 9); }
+  }
+}
+
 function physicsFrame(dt, inp) {
   const sp = Math.hypot(st.vx, st.vz);
   const env = groundEnv();
   const pin = { thr: inp.thr, brk: inp.brk, clu: inp.clu, ebrake: inp.ebrake, steerAngle: steerAngleFor(inp, sp) };
   if (frozen) { pin.brk = 1; pin.ebrake = true; }
+  kartFrame(dt, inp, pin, sp);
+  if (kart.on) env.assist = { abs: true, tc: false, esc: false };
+  if (boost.t > 0) { boost.t -= dt; if (boost.t <= 0) boost.a = 0; }
+  if (boost.flash > 0) boost.flash -= dt;
   lastInp = Object.assign(inp, { steerAngle: pin.steerAngle });
   if (paddleHold > 0) paddleHold -= dt;
   acc += dt; let n = 0;
   while (acc >= H && n < 80) {
     if (autoShiftOn() && paddleHold <= 0) P.autoShift(car, st, pin, H, cfg.assist);
-    P.step(car, st, pin, env, H); acc -= H; n++;
+    P.step(car, st, pin, env, H); kartSub(H); acc -= H; n++;
   }
   if (n >= 80) acc = 0;
-  if (st.impactV > 4) { damage(st.impactV - 4, 0, -car.HCG, 0, 1, 'landing'); }
+  if (st.impactV > 6.5) { damage(st.impactV - 6.5, 0, -car.HCG, 0, 1, 'landing'); }
   st.impactV = 0;
   // water too deep / sea: reset after a moment
   if (inWater > 1.1) { drownT += dt; if (drownT > 1.6) { drownT = 0; toast('Too deep — car recovered'); resetToRoad(); } } else drownT = 0;
@@ -516,12 +571,27 @@ function initTraffic() {
 function lanePose(lane, p) {
   if (lane.city) {
     const pc = lane.city;
-    return pc.axis === 'z' ? { x: pc.c + lane.off, z: p, y: 0, h: lane.dir > 0 ? Math.PI : 0 } : { x: p, z: pc.c + lane.off, y: 0, h: lane.dir > 0 ? Math.PI / 2 : -Math.PI / 2 };
+    const straight = pc.axis === 'z' ? { x: pc.c + lane.off, z: p, y: 0, h: lane.dir > 0 ? Math.PI : 0 } : { x: p, z: pc.c + lane.off, y: 0, h: lane.dir > 0 ? Math.PI / 2 : -Math.PI / 2 };
+    const rb = cityRoundabout(pc, p);
+    if (!rb) return straight;
+    // around the island: push the lane out radially (right-hand traffic → counter-clockwise, island on the driver's left)
+    const at = pp => { const x = pc.axis === 'z' ? pc.c + lane.off : pp, z = pc.axis === 'z' ? pp : pc.c + lane.off;
+      const dx = x - rb.x, dz = z - rb.z, rho = Math.hypot(dx, dz) || 1e-3, Rr = rb.Ri + 2.5 + Math.abs(lane.off);
+      const f = Math.max(0, 1 - (rho / (1.6 * Rr)) ** 2), rr = Math.sqrt(rho * rho + Rr * Rr * f * f);
+      return [rb.x + dx / rho * rr, rb.z + dz / rho * rr]; };
+    const [x, z] = at(p), [xa, za] = at(p - 0.5 * lane.dir), [xb, zb] = at(p + 0.5 * lane.dir);
+    return { x, z, y: 0, h: Math.atan2(xb - xa, -(zb - za)) };
   }
   const r = lane.road, sp = r.len / r.n, f = clamp(p / sp, 0, r.n - 1.001), i = Math.floor(f), t = f - i, j = r.idx(i + 1);
   const x = lerp(r.x[i], r.x[j], t), z = lerp(r.z[i], r.z[j], t), y = lerp(r.y[i], r.y[j], t), rx = -r.tz[i], rz = r.tx[i];
   const h = Math.atan2(r.tx[i], -r.tz[i]) + (lane.dir < 0 ? Math.PI : 0);
   return { x: x + rx * lane.off, z: z + rz * lane.off, y, h };
+}
+function cityRoundabout(pc, p) {
+  if (!world.roundAt) return null;
+  const B = world.city.B, k = Math.round(p / B), kc = Math.round(pc.c / B);
+  const rb = pc.axis === 'z' ? world.roundAt(kc, k) : world.roundAt(k, kc);
+  return rb && Math.abs(p - k * B) < rb.Ro * 1.7 ? rb : null;
 }
 function spawnAI() {
   const lanes = world.lanes, lane = lanes[Math.floor(Math.random() * lanes.length)];
@@ -568,6 +638,7 @@ function updateTraffic(dt) {
       const kx = pc.axis === 'z' ? Math.round(pc.c / B) : kN, kz = pc.axis === 'z' ? kN : Math.round(pc.c / B);
       const light = world.lightState(kx, kz, pc.axis, now);
       if (light > 0 && dist > -1 && dist < 45 && !(light === 1 && dist < a.v * a.v / 8)) target = Math.min(target, Math.max(0, (dist - 0.5) * 0.7));
+      if (cityRoundabout(pc, a.p + lane.dir * 25) || cityRoundabout(pc, a.p)) target = Math.min(target, 8.5);
       if ((lane.dir > 0 && a.p > pc.a1 - 15) || (lane.dir < 0 && a.p < pc.a0 + 15)) { traffic.list.splice(k, 1); continue; }
     } else {
       const r = lane.road, sp = r.len / r.n;
@@ -791,6 +862,10 @@ function hud(inp, dt) {
   else if (flashT > 0) { dr.hidden = false; dr.className = 'hud ' + flash; $('dScore').textContent = flash === 'lost' ? 'LOST' : '+' + banked.toLocaleString(); $('dSub').textContent = flash === 'lost' ? 'Spun or went off' : 'DRIFT BANKED'; }
   else dr.hidden = true;
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').hidden = true; }
+  const kb = $('kart');
+  if (boost.flash > 0 || boost.t > 0.2) { kb.hidden = false; kb.className = 'hud boost'; $('kTxt').textContent = 'BOOST'; $('kTxt').style.color = ''; kb.querySelectorAll('i').forEach(e => e.style.background = ''); }
+  else if (kart.on) { kb.hidden = false; kb.className = 'hud'; $('kTxt').textContent = 'DRIFT'; $('kTxt').style.color = KCOL[kart.tier]; kb.querySelectorAll('i').forEach((e, i) => e.style.background = kart.tier > i ? KCOL[kart.tier] : ''); }
+  else kb.hidden = true;
 }
 
 /* ---------- minimap ---------- */
@@ -928,6 +1003,7 @@ const PALETTE = [0xe8453c, 0x2f7de1, 0xf2c230, 0x3ddc84, 0xb05ce6, 0xff8a2b, 0x2
 const myId = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const myColor = PALETTE[Math.floor(Math.random() * PALETTE.length)];
 const hex = c => '#' + ((c >>> 0) & 0xffffff).toString(16).padStart(6, '0');
+const myCol = () => spec && paintFor(spec.id).color != null ? paintFor(spec.id).color : myColor;
 const cleanName = s => String(s || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 16);
 if (!cleanName(cfg.name)) cfg.name = 'Driver ' + Math.floor(1000 + Math.random() * 9000);
 const myName = () => cleanName(cfg.name) || 'Driver';
@@ -945,11 +1021,13 @@ function makeLabel(text, color) {
 }
 function ghostFor(p) {
   let gh = ghosts.get(p.id);
-  if (gh && gh.car !== p.car) { removeGhost(p.id); gh = null; }
+  const look = `${p.car}|${p.c}|${p.d}|${p.dc}|${p.dn}`;
+  if (gh && gh.look !== look) { removeGhost(p.id); gh = null; }
   if (gh) return gh;
   const sp = carById(p.car), color = Number.isFinite(p.c) ? p.c : 0x888888;
-  const m = makeModelFor(sp, { color }); scene.add(m.group);
-  gh = { id: p.id, car: sp.id, m, color, name: '', label: null, x: p.x, z: p.z, y: p.y || 0, h: p.h, tx: p.x, tz: p.z, ty: p.y || 0, th: p.h, vx: 0, vz: 0, r: 0, t: performance.now(),
+  const decal = typeof p.d === 'string' && p.d && p.d !== 'none' ? { style: p.d.slice(0, 12), color: Number.isFinite(p.dc) ? p.dc : 0xffffff, num: clamp(Math.round(+p.dn || 0), 0, 99) } : null;
+  const m = makeModelFor(sp, { color, decal }); scene.add(m.group);
+  gh = { id: p.id, car: sp.id, look, m, color, name: '', label: null, x: p.x, z: p.z, y: p.y || 0, h: p.h, tx: p.x, tz: p.z, ty: p.y || 0, th: p.h, vx: 0, vz: 0, r: 0, t: performance.now(),
     len: sp.visual.length, wid: sp.visual.width, mass: sp.mass_kg };
   ghosts.set(p.id, gh); return gh;
 }
@@ -986,7 +1064,7 @@ function renderRoster() {
   if (net.ready) setNet('ok', `Online · ${mapDef.name.split(' ')[0]} · ${roomName() === 'main' ? '' : roomName() + ' · '}${list.length} driver${list.length === 1 ? '' : 's'}`);
   $('raceBtn').disabled = !net.ready || !!race.state;
 }
-function trackPresence() { if (!net.ready) return; net.trackT = now; net.ch.track({ id: myId, name: myName(), color: myColor, car: spec.id, best: run.best, laps: run.laps }).catch(() => {}); }
+function trackPresence() { if (!net.ready) return; net.trackT = now; net.ch.track({ id: myId, name: myName(), color: myCol(), car: spec.id, best: run.best, laps: run.laps }).catch(() => {}); }
 function joinNet() {
   const key = `r29:${mapDef.id}:${roomName()}`;
   if (net.ch && net.key === key) return;
@@ -1015,8 +1093,8 @@ function netTick(dt) {
   if (sig !== net.sig && now - net.trackT > 1) { net.sig = sig; trackPresence(); }
   net.sendT -= dt; if (net.sendT > 0) return;
   const r2 = v => Math.round(v * 100) / 100;
-  const p = { id: myId, n: myName(), c: myColor, car: spec.id, x: r2(st.x), z: r2(st.z), y: r2(st.y - car.HCG), h: Math.round(st.h * 1000) / 1000, vx: r2(st.vx), vz: r2(st.vz), r: Math.round(st.r * 1000) / 1000 };
-  const l = net.last, still = l && Math.hypot(st.vx, st.vz) < 0.05 && Math.abs(l.x - p.x) < 0.02 && Math.abs(l.z - p.z) < 0.02 && l.n === p.n && l.car === p.car;
+  const pt = paintFor(spec.id), p = { id: myId, n: myName(), c: myCol(), d: pt.decal || '', dc: pt.dcolor ?? 0xffffff, dn: pt.num ?? 29, car: spec.id, x: r2(st.x), z: r2(st.z), y: r2(st.y - car.HCG), h: Math.round(st.h * 1000) / 1000, vx: r2(st.vx), vz: r2(st.vz), r: Math.round(st.r * 1000) / 1000 };
+  const l = net.last, still = l && Math.hypot(st.vx, st.vz) < 0.05 && Math.abs(l.x - p.x) < 0.02 && Math.abs(l.z - p.z) < 0.02 && l.n === p.n && l.car === p.car && l.c === p.c && l.d === p.d;
   net.sendT = still ? 1 : 1 / 8; net.last = p;
   net.ch.send({ type: 'broadcast', event: 's', payload: p }).catch(() => {});
 }
@@ -1068,6 +1146,27 @@ function onFinish(f) {
 // mid-race fixes: pit limiter or race state should never leave the player frozen forever
 setInterval(() => { if (frozen && race.state !== 'countdown') frozen = false; }, 1000);
 
+/* ---------- kart drift sparks and boost camera ---------- */
+const sparks = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.3, 'rgba(255,255,255,0.75)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  return [0, 1].map(() => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, color: 0xffffff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })); sp.visible = false; scene.add(sp); return sp; });
+})();
+let fovK = 0;
+function kartFx(dt, fx, fz, groundY) {
+  const on = kart.on && kart.tier > 0 && st.contact, rx = Math.cos(st.h), rz = Math.sin(st.h);
+  sparks.forEach((sp, i) => {
+    sp.visible = on; if (!on) return;
+    const side = i ? 1 : -1, s = 0.55 + Math.random() * 0.5 + kart.tier * 0.12;
+    sp.position.set(st.x - fx * (car.B + 0.25) + rx * side * car.TW / 2, groundY + 0.18, st.z - fz * (car.B + 0.25) + rz * side * car.TW / 2);
+    sp.scale.set(s, s, 1); sp.material.color.set(KCOL[kart.tier]);
+  });
+  const want = boost.t > 0 ? 1 : 0; fovK += (want - fovK) * (1 - Math.exp(-dt * (want ? 8 : 3)));
+  const fov = 72 + (reduceMotion ? 0 : 10 * fovK);
+  if (Math.abs(cam.fov - fov) > 0.05) { cam.fov = fov; cam.updateProjectionMatrix(); }
+}
+
 /* ---------- cameras ---------- */
 const eul = new THREE.Euler(0, 0, 0, 'YXZ'), q1 = new THREE.Quaternion(), v1 = new THREE.Vector3();
 let chase = null, smPitch = 0, smRoll = 0;
@@ -1096,6 +1195,7 @@ function placeModelAndCamera(dt) {
     v1.set(0, eye.h + bump, -eye.f).applyQuaternion(q1);
     cam.position.set(st.x + v1.x, groundY + v1.y, st.z + v1.z); cam.quaternion.copy(q1);
   }
+  kartFx(dt, fx, fz, groundY);
   headlight.position.set(st.x + fx * 2, groundY + 0.8, st.z + fz * 2);
   headlight.target.position.set(st.x + fx * 40, groundY - 1, st.z + fz * 40); headlight.target.updateMatrixWorld();
   if (skyRing) { skyRing.position.x = cam.position.x; skyRing.position.z = cam.position.z; skyRing.position.y = cam.position.y + 150; }
@@ -1160,8 +1260,31 @@ function renderCars() {
     <tr><th>Top speed target · sim</th><td class="${chk(m.top_speed_mph, v.top_speed_mph, 0.03)}">${v.top_speed_mph} · ${m.top_speed_mph} mph</td></tr>
     <tr><th>60–0 mph target · sim</th><td class="${chk(m.braking_60_0_ft, v.braking_distance_60_0_ft, 0.03)}">${v.braking_distance_60_0_ft} · ${m.braking_60_0_ft} ft</td></tr>`;
   $('carShift').value = shiftFor(selCar);
+  renderPaint();
   showroomCar(selCar);
 }
+/* paint and decals, saved per car */
+const PAINTS = [null, 0xd8432e, 0xff8a2b, 0xf2c230, 0x3ddc84, 0x1f8f5a, 0x25c6d9, 0x2f7de1, 0x1d2f6b, 0xb05ce6, 0xf26bb5, 0xf2f2f2, 0x8a8f94, 0x16181b];
+function setPaint(patch) {
+  cfg.paint = cfg.paint || {}; cfg.paint[selCar] = Object.assign({}, cfg.paint[selCar], patch); save();
+  show.id = ''; showroomCar(selCar); renderPaint();
+  if (ready && spec && spec.id === selCar) { scene.remove(model.group); model = makeModelFor(spec); scene.add(model.group); if (net.ready) { net.sendT = 0; trackPresence(); } }
+}
+function renderPaint() {
+  const pt = paintFor(selCar), base = carById(selCar).visual.color;
+  $('paintSw').innerHTML = PAINTS.map((c, i) => `<button type="button" class="sw${(pt.color ?? null) === c ? ' sel' : ''}" data-i="${i}" title="${c == null ? 'Factory color' : hex(c)}" aria-label="${c == null ? 'Factory color' : 'Paint ' + hex(c)}" style="background:${hex(c == null ? base : c)}">${c == null ? '<small style="font-size:9px;color:#fff;text-shadow:0 1px 2px #000">F</small>' : ''}</button>`).join('') +
+    `<input type="color" id="paintCustom" aria-label="Custom paint color" value="${hex(pt.color ?? base)}">`;
+  $('paintSw').querySelectorAll('.sw').forEach(b => b.onclick = () => setPaint({ color: PAINTS[+b.dataset.i] }));
+  $('paintCustom').onchange = e => setPaint({ color: parseInt(e.target.value.slice(1), 16) });
+  if (!$('decalSel').options.length) $('decalSel').innerHTML = CARS.DECALS.map(([id, label]) => `<option value="${id}">${esc(label)}</option>`).join('');
+  $('decalSel').value = pt.decal || 'none';
+  $('decalCol').value = hex(pt.dcolor ?? 0xffffff);
+  $('decalNum').value = pt.num ?? 29;
+  $('decalNum').disabled = !['number', 'race'].includes(pt.decal);
+}
+$('decalSel').onchange = e => setPaint({ decal: e.target.value });
+$('decalCol').onchange = e => setPaint({ dcolor: parseInt(e.target.value.slice(1), 16) });
+$('decalNum').onchange = e => setPaint({ num: clamp(Math.round(+e.target.value || 0), 0, 99) });
 $('carShift').onchange = e => { cfg.shiftByCar = cfg.shiftByCar || {}; cfg.shiftByCar[selCar] = e.target.value; save(); };
 $('carOk').onclick = () => { cfg.carId = selCar; save(); if (ready) { setCar(selCar, true); loadGhost(); resetRun(); } showMenu(document.body.dataset.from === 'pause' && ready ? 'scrPause' : 'scrMain'); };
 
@@ -1192,9 +1315,9 @@ $('mapGo').onclick = async () => {
 };
 function renderSettings() {
   $('sTc').value = cfg.tc; $('sTcV').textContent = cfg.tc ? cfg.tc + '/10' : 'OFF';
-  $('sAssist').value = cfg.assist; $('sShift').value = cfg.shift; $('sCam').value = cfg.cam; $('sSeat').value = cfg.seat; $('sGhost').value = String(cfg.ghost); $('sMini').value = String(cfg.mini); $('sQual').value = cfg.qual;
+  $('sKart').value = String(cfg.kart ? 1 : 0); $('sAssist').value = cfg.assist; $('sShift').value = cfg.shift; $('sCam').value = cfg.cam; $('sSeat').value = cfg.seat; $('sGhost').value = String(cfg.ghost); $('sMini').value = String(cfg.mini); $('sQual').value = cfg.qual;
 }
-for (const [id, key, num] of [['sAssist', 'assist'], ['sShift', 'shift'], ['sCam', 'cam'], ['sSeat', 'seat', 1], ['sGhost', 'ghost', 1], ['sMini', 'mini', 1], ['sQual', 'qual']])
+for (const [id, key, num] of [['sKart', 'kart', 1], ['sAssist', 'assist'], ['sShift', 'shift'], ['sCam', 'cam'], ['sSeat', 'seat', 1], ['sGhost', 'ghost', 1], ['sMini', 'mini', 1], ['sQual', 'qual']])
   $(id).addEventListener(id === 'sSeat' ? 'input' : 'change', e => { cfg[key] = num ? +e.target.value : e.target.value; save(); if (key === 'qual') toast('Quality applies after reloading the page'); });
 function renderLbScreen() {
   $('lbMap').innerHTML = MAPS.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join(''); $('lbMap').value = cfg.mapId;
@@ -1252,11 +1375,12 @@ function update(dt) {
   physicsFrame(dt, inp);
   updateTraffic(dt);
   const others = traffic.list.slice(); for (const [, gh] of ghosts) others.push({ key: gh.id, remote: true, x: gh.x, z: gh.z, y: gh.y + car.HCG, h: gh.h, vx: gh.vx, vz: gh.vz, len: gh.len, wid: gh.wid, mass: gh.mass });
-  collide(others); flushPendingHits();
+  collide(others); flushPendingHits(); boostPads();
   if (!frozen) checkGates(px, pz);
   recordGhost(dt); driftUpdate(dt); skids();
   updatePanel(inp.gp); hud(inp, dt); updateAudio(inp); netTick(dt); raceTick();
   if (world.updateLights) world.updateLights(now, st.x, st.z);
+  if (world.boostPads) { const o = -(now * 1.6 % 1); for (const p of world.boostPads) p.tex.offset.y = o; }
 }
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000); last = t;
@@ -1288,7 +1412,7 @@ requestAnimationFrame(frame);
 window.__qa = {
   loadMap: async (id, o = {}) => { if (o.weather) cfg.weather[id] = o.weather; if (o.time) cfg.time[id] = o.time; if (o.car) cfg.carId = o.car; if (o.mode) cfg.mode = o.mode; if (o.traffic != null) cfg.traffic = o.traffic; await loadMap(id, o); hideMenu(); return window.__qa.snap(); },
   snap: () => ({ map: mapDef && mapDef.id, car: spec.id, x: st.x, y: st.y, z: st.z, h: st.h, mph: Math.hypot(st.vx, st.vz) / MPH, gear: st.gear, rpm: st.we * P.RPM, surf: surfName, contact: st.contact, damage: st.damage,
-    tempF: st.tempF, tempR: st.tempR, cp: run.cp, started: run.started, laps: run.laps, lastLap: run.lastLap, traffic: traffic.list.length, tiles: world && world.tiles ? world.tiles.tiles.size : 0, water: inWater, cap: speedCap, abs: st.absOn, esc: st.escOn, tc: st.tcOn, frozen, cam: cfg.cam }),
+    tempF: st.tempF, tempR: st.tempR, cp: run.cp, started: run.started, laps: run.laps, lastLap: run.lastLap, traffic: traffic.list.length, tiles: world && world.tiles ? world.tiles.tiles.size : 0, water: inWater, cap: speedCap, abs: st.absOn, esc: st.escOn, tc: st.tcOn, frozen, cam: cfg.cam, kart: kart.on, tier: kart.tier, boost: boost.t, vy: st.vy }),
   input: o => { qaInput = o; }, cam: c => { cfg.cam = c; }, auto: mph => { qaAuto = (mph || 0) * MPH; },
   place: sp => { placeAt(sp); return window.__qa.snap(); },
   world: () => world, run: () => run, hour: h => { hour = h; },

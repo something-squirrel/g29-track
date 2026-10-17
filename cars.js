@@ -19,6 +19,73 @@ function extrudeProfile(pts, L, H, W, bevel) {
   g.rotateY(Math.PI / 2); // +x (front) -> -z
   return g.index ? g.toNonIndexed() : g;
 }
+/* ---------- paint and decals ----------
+ * Side decals are drawn on a canvas that covers the car's side silhouette (u: rear→front, v: bottom→top) and
+ * applied to a flat copy of the body outline on each side, so nothing hangs off the bodywork.
+ * Top stripes are ribbons that follow the profile from the rear bumper over the roof to the front bumper. */
+const DECALS = [
+  ['none', 'None'], ['stripes', 'Racing stripes'], ['side', 'Side stripe'], ['number', 'Race number'],
+  ['race', 'Stripes + number'], ['flames', 'Flames'], ['checker', 'Checkered'], ['split', 'Two-tone sides'],
+];
+const css = c => '#' + ((c >>> 0) & 0xffffff).toString(16).padStart(6, '0');
+function drawSide(g, w, h, d) {
+  const col = css(d.color ?? 0xffffff), dark = '#111';
+  const X = u => u * w, Y = v => (1 - v) * h;
+  if (d.style === 'side') {
+    g.fillStyle = col; g.fillRect(0, Y(0.56), w, Y(0.44) - Y(0.56));
+    g.fillRect(0, Y(0.4), w, Y(0.37) - Y(0.4));
+  }
+  if (d.style === 'checker') {
+    const s = h * 0.075; for (let x = 0; x * s < w; x++) for (let y = 0; y < 2; y++) { g.fillStyle = (x + y) % 2 ? col : dark; g.fillRect(x * s, Y(0.42) + y * s, s, s); }
+  }
+  if (d.style === 'split') { g.fillStyle = col; g.fillRect(0, Y(0.48), w, h); }
+  if (d.style === 'flames') {
+    g.fillStyle = col;
+    for (let k = 0; k < 6; k++) { // tongues of flame licking back from the nose
+      const yc = 0.32 + k * 0.05, len = 0.32 + ((k * 37) % 5) * 0.05, th = 0.05;
+      g.beginPath(); g.moveTo(X(1.02), Y(yc - th)); g.bezierCurveTo(X(0.85), Y(yc - th), X(1 - len * 0.7), Y(yc + th * 1.6), X(1 - len), Y(yc + th * 0.4));
+      g.bezierCurveTo(X(1 - len * 0.6), Y(yc + th * 0.2), X(0.9), Y(yc + th * 1.2), X(1.02), Y(yc + th)); g.closePath(); g.fill();
+    }
+    g.fillRect(X(0.88), Y(0.6), w, Y(0.26) - Y(0.6));
+  }
+  if (d.style === 'number' || d.style === 'race') {
+    const cx = X(0.5), cy = Y(0.47), r = h * 0.2;
+    g.fillStyle = '#f4f4f4'; g.beginPath(); g.ellipse(cx, cy, r * 1.15, r, 0, 0, Math.PI * 2); g.fill();
+    g.lineWidth = h * 0.02; g.strokeStyle = col; g.stroke();
+    g.fillStyle = dark; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `700 ${Math.round(r * 1.4)}px "Chakra Petch", Impact, Arial, sans-serif`;
+    g.fillText(String(d.num ?? 29).slice(0, 2), cx, cy + r * 0.06);
+  }
+}
+function addDecals(grp, prof, L, H, W, d) {
+  const sideStyles = ['side', 'number', 'race', 'flames', 'checker', 'split'];
+  if (sideStyles.includes(d.style)) {
+    const c = document.createElement('canvas'); c.width = 1024; c.height = Math.round(1024 * H / L); drawSide(c.getContext('2d'), c.width, c.height, d);
+    const shape = new THREE.Shape();
+    prof.body.forEach(([f, h], i) => { const x = (f - 0.5) * L, y = h * H; i ? shape.lineTo(x, y) : shape.moveTo(x, y); });
+    for (const side of [1, -1]) {
+      const t = new THREE.CanvasTexture(c); t.anisotropy = 4;
+      // ShapeGeometry UVs are the shape's own coordinates (metres); map them onto the canvas. Left side reads mirrored otherwise.
+      t.repeat.set(side / L, 1 / H); t.offset.set(0.5, 0);
+      const geo = new THREE.ShapeGeometry(shape); geo.rotateY(Math.PI / 2); geo.translate(side * (W / 2 + 0.006), 0, 0);
+      const m = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, shininess: 60, specular: 0x444444, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }));
+      m.userData.decal = true; grp.add(m);
+    }
+  }
+  if (d.style === 'stripes' || d.style === 'race') {
+    const pts = prof.body.map(([f, h]) => [(f - 0.5) * L, h * H]), pos = [];
+    const lift = 0.07, lanes = [[-0.36, -0.12], [0.12, 0.36]].map(([a, b]) => [a * W / 1.85, b * W / 1.85]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], tl = Math.hypot(x1 - x0, y1 - y0); if (tl < 1e-4) continue;
+      const nx = -(y1 - y0) / tl, ny = (x1 - x0) / tl; // outward (left) normal of the top outline
+      if (ny < -0.2) continue; // skip the underside
+      const a = [x0 + nx * lift, y0 + ny * lift], b = [x1 + nx * lift, y1 + ny * lift];
+      for (const [l0, l1] of lanes) { const P = (p, l) => [l, p[1], -p[0]]; const q = [P(a, l0), P(a, l1), P(b, l0), P(b, l1)]; for (const v of [q[0], q[2], q[1], q[1], q[2], q[3]]) pos.push(...v); }
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshPhongMaterial({ color: d.color ?? 0xffffff, side: THREE.DoubleSide, shininess: 60, specular: 0x444444, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }));
+    m.userData.decal = true; grp.add(m);
+  }
+}
 function makeCarModel(v, opts = {}) {
   const prof = PROFILES[v.body] || PROFILES.sedan;
   const L = v.length, W = v.width, H = v.height, wb = v.wheelbase || L * 0.6, wr = v.wheel_radius || (v.body === 'suv' ? 0.4 : 0.33);
@@ -62,6 +129,7 @@ function makeCarModel(v, opts = {}) {
     const lm = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
     for (let k = 0; k < 6; k++) { const b = new THREE.Mesh(new THREE.BoxGeometry(W * 0.7, 0.03, 0.08), lm); b.position.set(0, H * (0.66 + k * 0.006) + 0.02, L * (0.5 - 0.06 - k * 0.035) - L * 0.0); b.position.z = L / 2 - 0.25 - k * 0.14; b.position.y = H * 0.63 + k * 0.035; grp.add(b); }
   }
+  if (opts.decal && opts.decal.style && opts.decal.style !== 'none' && !opts.ghost) addDecals(grp, prof, L, H, W, opts.decal);
   const orig = Float32Array.from(bodyGeo.attributes.position.array);
   const model = { group: grp, body, wheels, lights, wr, paint, L, W, H,
     deform(lx, lz, nx, nz, amount) { // local impact point (x right, z back) and push direction
@@ -100,5 +168,5 @@ function trafficGeometry() {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
 }
-root.R29Cars = { makeCarModel, trafficGeometry, PROFILES };
+root.R29Cars = { makeCarModel, trafficGeometry, PROFILES, DECALS };
 })(typeof self !== 'undefined' ? self : this);

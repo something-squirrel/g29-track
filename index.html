@@ -55,6 +55,14 @@ body.inmenu .hud{opacity:0;pointer-events:none}
 #toast{position:fixed;top:calc(96px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 14px;font-size:15px;font-weight:600;letter-spacing:.04em;text-align:center;max-width:calc(100% - 32px)}
 #countdown{position:fixed;inset:0;display:grid;place-items:center;pointer-events:none;font-size:clamp(80px,18vw,180px);font-weight:700;color:var(--accent);text-shadow:0 6px 24px rgba(0,0,0,.6)}
 #countdown.go{color:var(--go)}
+#kart{position:fixed;bottom:calc(150px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);display:flex;gap:10px;align-items:center;font-weight:700;letter-spacing:.14em;font-size:15px;text-shadow:0 2px 8px rgba(0,0,0,.7);pointer-events:none}
+#kart .pips{display:flex;gap:4px}
+#kart .pips i{width:22px;height:8px;border-radius:2px;background:rgba(255,255,255,.18)}
+#kart.boost{font-size:22px;color:#ffd23a}
+.paint{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.paint button.sw{width:28px;height:28px;padding:0;border-radius:50%;border:2px solid rgba(255,255,255,.25);min-height:0}
+.paint button.sw.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.paint input[type=color]{width:40px;height:30px;padding:0;border:0;background:none}
 #topRight{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px));display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:60%}
 #topRight button{background:var(--panel)}
 
@@ -184,6 +192,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
 </div>
 <div id="banner" class="hud" hidden>OFF TRACK</div>
 <div id="drift" class="hud" hidden><span class="big" id="dScore">0</span><span class="sub" id="dSub">DRIFT</span></div>
+<div id="kart" class="hud" hidden><span id="kTxt">DRIFT</span><span class="pips"><i></i><i></i><i></i></span></div>
 <div id="toast" class="hud" hidden></div>
 <div id="countdown" hidden></div>
 <div id="topRight" class="hud">
@@ -212,7 +221,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
   </section>
   <section><h3>Button binds</h3><div class="map" id="binds"></div></section>
   <p class="note">To bind, click Bind and press the wheel button you want. To detect a pedal, click Detect, then press that pedal all the way and let go within 3 seconds.</p>
-  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto/manual, <kbd>[</kbd><kbd>]</kbd> traction control, <kbd>C</kbd> camera, <kbd>R</kbd> reset to road, <kbd>Esc</kbd> menu.</p>
+  <p class="note">Keyboard: <kbd>W</kbd> gas, <kbd>S</kbd> brake, <kbd>A</kbd><kbd>D</kbd> steer, <kbd>↑</kbd><kbd>↓</kbd> shift, <kbd>Space</kbd> e-brake, <kbd>M</kbd> driver aids, <kbd>T</kbd> auto/manual, <kbd>[</kbd><kbd>]</kbd> traction control, <kbd>C</kbd> camera, <kbd>R</kbd> reset to road, <kbd>Shift</kbd> kart drift (hold), <kbd>K</kbd> kart drift on/off, <kbd>Esc</kbd> menu.</p>
   <button type="button" id="closeSetup">Close</button>
 </aside>
 
@@ -271,7 +280,12 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
       <p class="sub">Spec targets with what the physics test bench measured (flat dry asphalt, warm tires).</p>
       <div class="cards" id="carCards"></div>
       <table class="spec" id="carSpec"></table>
-      <div class="opts"><label for="carShift">Gearbox</label><select id="carShift"><option value="auto">Automatic</option><option value="manual">Manual (paddles / arrow keys)</option></select></div>
+      <div class="opts"><label for="carShift">Gearbox</label><select id="carShift"><option value="auto">Automatic</option><option value="manual">Manual (paddles / arrow keys)</option></select>
+        <label>Paint</label><span class="paint" id="paintSw"></span>
+        <label for="decalSel">Decals</label><select id="decalSel"></select>
+        <label for="decalCol">Decal color</label><span class="paint"><input type="color" id="decalCol" value="#ffffff"><span class="note">Stripes, numbers, flames</span></span>
+        <label for="decalNum">Number</label><input type="number" id="decalNum" min="0" max="99" value="29" style="width:7ch">
+      </div>
       <div class="foot"><button type="button" class="primary" id="carOk">Select car</button><button type="button" class="back">Back</button></div>
     </section>
 
@@ -303,6 +317,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
         <label for="sSeat">Seat height</label><input type="range" id="sSeat" min="-0.2" max="0.4" step="0.02">
         <label for="sGhost">Ghost</label><select id="sGhost"><option value="1">Show my best-lap ghost</option><option value="0">Hide</option></select>
         <label for="sMini">Minimap</label><select id="sMini"><option value="1">Show</option><option value="0">Hide</option></select>
+        <label for="sKart">Kart drift</label><select id="sKart"><option value="1">On · hold Shift / drift button / e-brake while steering (K)</option><option value="0">Off · sim handbrake only</option></select>
         <label for="sQual">Quality</label><select id="sQual"><option value="high">High</option><option value="low">Low (faster)</option></select>
       </div>
       <div class="foot"><button type="button" class="back">Back</button></div>
