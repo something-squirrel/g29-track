@@ -8,19 +8,20 @@
 const G = 9.81, RHO = 1.225, RPM = 60 / (2 * Math.PI), D2R = Math.PI / 180;
 const MPH = 0.44704, HP = 745.7, FT = 0.3048;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const ACCEL_SCALE = 1.2; // game-wide: every car accelerates 1.2x harder than its real-world spec (set in step)
+const ACCEL_SCALE = 1.2;
+const GRIP_SCALE = 1.18; // game-wide extra tire grip on every surface (arcade feel; spec numbers were measured without it) // game-wide: every car accelerates 1.2x harder than its real-world spec (set in step)
 
 /* Surfaces: base friction (relative to dry asphalt), category and rolling resistance coefficient. */
 const SURFACES = {
   asphalt:  { label: 'Asphalt',  mu: 1.0,  cat: 'paved', rr: 0.012 },
   concrete: { label: 'Concrete', mu: 0.96, cat: 'paved', rr: 0.012 },
   curb:     { label: 'Curb',     mu: 0.88, cat: 'paved', rr: 0.016 },
-  gravel:   { label: 'Gravel',   mu: 0.6,  cat: 'loose', rr: 0.05 },
-  dirt:     { label: 'Dirt',     mu: 0.68, cat: 'loose', rr: 0.03 },
+  gravel:   { label: 'Gravel',   mu: 0.74, cat: 'loose', rr: 0.05 },
+  dirt:     { label: 'Dirt',     mu: 0.8,  cat: 'loose', rr: 0.03 },
   hardpack: { label: 'Packed dirt road', mu: 0.92, cat: 'paved', rr: 0.016 },
-  sand:     { label: 'Sand',     mu: 0.5,  cat: 'loose', rr: 0.11 },
-  rock:     { label: 'Rock',     mu: 0.78, cat: 'loose', rr: 0.022 },
-  grass:    { label: 'Grass',    mu: 0.55, cat: 'loose', rr: 0.05 },
+  sand:     { label: 'Sand',     mu: 0.66, cat: 'loose', rr: 0.11 },
+  rock:     { label: 'Rock',     mu: 0.84, cat: 'loose', rr: 0.022 },
+  grass:    { label: 'Grass',    mu: 0.78, cat: 'loose', rr: 0.05 },
   water:    { label: 'Water',    mu: 0.42, cat: 'loose', rr: 0.08 },
   snow:     { label: 'Snow',     mu: 0.3,  cat: 'snow',  rr: 0.035 },
 };
@@ -164,7 +165,7 @@ function step(c, s, inp, env, h) {
   const wl = [Fzf / 2 + dLf, Fzf / 2 - dLf, Fzr / 2 + dLr, Fzr / 2 - dLr];
   s.loads = wl;
   const tgF = tempGrip(s.tempF, c.tire.opt), tgR = tempGrip(s.tempR, c.tire.opt);
-  const muF = env.muF * c.grip * tgF, muR = env.muR * c.grip * tgR;
+  const gs = root.R29_GRIP ?? GRIP_SCALE, muF = env.muF * c.grip * tgF * gs, muR = env.muR * c.grip * tgR * gs;
   const grip = (mu, f) => mu * f * Math.max(0.5, 1 - c.LS * (f / c.FZ0 - 1));
   const Df = grip(muF, wl[0]) + grip(muF, wl[1]), Dr = grip(muR, wl[2]) + grip(muR, wl[3]);
   const tire = (D, sx, sy) => {

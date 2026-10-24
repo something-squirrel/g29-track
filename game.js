@@ -23,6 +23,7 @@ if (cfg.lookBtn == null) { cfg.lookBtn = 10; if (cfg.nitroBtn === 10) cfg.nitroB
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} };
 const ACTIONS = [['upBtn', 'Upshift'], ['downBtn', 'Downshift'], ['ebrakeBtn', 'E-brake'], ['modeBtn', 'Driver aids'], ['resetBtn', 'Reset car'], ['camBtn', 'Camera'], ['menuBtn', 'Menu / pause'], ['tcUpBtn', 'Traction control +'], ['tcDownBtn', 'Traction control −'], ['driftBtn', 'Kart drift (hold)'], ['nitroBtn', 'Nitro'], ['itemBtn', 'Use item'], ['lookBtn', 'Look back (hold)'], ['gunBtn', 'Fire gun'], ['missileBtn', 'Fire missile'], ['grenadeBtn', 'Throw grenade']];
 if (!VEH.find(v => v.id === cfg.carId)) cfg.carId = VEH[0].id;
+const savedLvl = String(cfg.mapId || '').startsWith('lvl:') ? cfg.mapId.slice(4) : null; // community level, fetched after start-up
 if (!MAPS.find(m => m.id === cfg.mapId)) cfg.mapId = MAPS[0].id;
 try { const n = localStorage.getItem('g29track.name'); if (n && !cfg.name) cfg.name = n; } catch (e) {}
 
@@ -258,7 +259,8 @@ function makeModelFor(sp, opts = {}) {
   const c = P.createCar(sp), mine = !opts.ghost && opts.color == null ? paintFor(sp.id) : null;
   const color = opts.color != null ? opts.color : mine && mine.color != null ? mine.color : null;
   const decal = opts.decal || (mine && mine.decal ? { style: mine.decal, color: mine.dcolor ?? 0xffffff, num: mine.num ?? 29 } : null);
-  return CARS.makeCarModel(Object.assign({}, sp.visual, color != null ? { color } : {}), { ghost: !!opts.ghost, decal, cgFromFront: c.A * (sp.visual.wheelbase / c.WB) });
+  const rim = opts.rim != null ? opts.rim : mine && mine.rim != null ? mine.rim : null;
+  return CARS.makeCarModel(Object.assign({}, sp.visual, color != null ? { color } : {}, rim != null ? { rim } : {}), { ghost: !!opts.ghost, decal, cgFromFront: c.A * (sp.visual.wheelbase / c.WB) });
 }
 function setCar(id, keepPose) {
   const pose = keepPose && st ? { x: st.x, z: st.z, y: st.y - car.HCG, h: st.h } : null;
@@ -401,10 +403,12 @@ function kartFrame(dt, inp, pin, sp) {
 function kartSub(h) {
   if (boost.t > 0 && st.contact) { const a = boost.a * h; st.vx += Math.sin(st.h) * a; st.vz -= Math.cos(st.h) * a; }
   if (!kart.on || !st.contact) return;
-  const k = clamp(0.5 + 0.5 * kart.steer * kart.dir, 0, 1), R = lerp(Math.max(34, kart.sp * 3.2), Math.max(11, kart.sp * 1.1), k), rt = kart.dir * kart.sp / R;
+  // the drift scrubs speed (more when you steer into it) so you can hold a tight line through the corner
+  const k = clamp(0.5 + 0.5 * kart.steer * kart.dir, 0, 1), R = lerp(Math.max(22, kart.sp * 2.2), Math.max(7, kart.sp * 0.7), k), rt = kart.dir * kart.sp / R;
+  kart.sp = Math.max(9, kart.sp - (1.5 + 4 * k) * h);
   kart.vh += rt * h;
   const proj = st.vx * Math.sin(kart.vh) - st.vz * Math.cos(kart.vh);
-  kart.sp = clamp(proj, kart.sp - 1.6 * h, kart.sp + 8 * h);
+  kart.sp = clamp(proj, kart.sp - 1.6 * h, kart.sp + 2 * h);
   st.vx = Math.sin(kart.vh) * kart.sp; st.vz = -Math.cos(kart.vh) * kart.sp;
   st.r = rt + clamp(wrapA(kart.vh + kart.dir * 0.42 - st.h) * 7, -2.5, 2.5);
 }
@@ -1124,6 +1128,7 @@ let sb = null;
 try { if (window.supabase) sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }, realtime: { params: { eventsPerSecond: 20 } } }); } catch (e) { sb = null; }
 let lastSubmit = 0;
 async function lbSubmit(t) {
+  if (mapDef.id === LVL + 'local') return;
   if (!sb || performance.now() - lastSubmit < 15000) return;
   lastSubmit = performance.now();
   const { error } = await sb.from('lap_times').insert({ player_name: myName(), map_id: mapDef.id, car_id: spec.id, weather: weatherId, time_ms: Math.round(t * 1000) });
@@ -1408,12 +1413,12 @@ function makeLabel(text, color) {
 }
 function ghostFor(p) {
   let gh = ghosts.get(p.id);
-  const look = `${p.car}|${p.c}|${p.d}|${p.dc}|${p.dn}`;
+  const look = `${p.car}|${p.c}|${p.d}|${p.dc}|${p.dn}|${p.rm}`;
   if (gh && gh.look !== look) { removeGhost(p.id); gh = null; }
   if (gh) return gh;
   const sp = carById(p.car), color = Number.isFinite(p.c) ? p.c : 0x888888;
   const decal = typeof p.d === 'string' && p.d && p.d !== 'none' ? { style: p.d.slice(0, 12), color: Number.isFinite(p.dc) ? p.dc : 0xffffff, num: clamp(Math.round(+p.dn || 0), 0, 99) } : null;
-  const m = makeModelFor(sp, { color, decal }); scene.add(m.group);
+  const m = makeModelFor(sp, { color, decal, rim: Number.isFinite(p.rm) && p.rm >= 0 ? p.rm : undefined }); scene.add(m.group);
   gh = { id: p.id, car: sp.id, look, m, color, name: '', label: null, x: p.x, z: p.z, y: p.y || 0, h: p.h, tx: p.x, tz: p.z, ty: p.y || 0, th: p.h, vx: 0, vz: 0, r: 0, t: performance.now(),
     len: sp.visual.length, wid: sp.visual.width, mass: sp.mass_kg };
   ghosts.set(p.id, gh); return gh;
@@ -1483,8 +1488,8 @@ function netTick(dt) {
   if (sig !== net.sig && now - net.trackT > 1) { net.sig = sig; trackPresence(); }
   net.sendT -= dt; if (net.sendT > 0) return;
   const r2 = v => Math.round(v * 100) / 100;
-  const pt = paintFor(spec.id), p = { id: myId, n: myName(), c: myCol(), d: pt.decal || '', dc: pt.dcolor ?? 0xffffff, dn: pt.num ?? 29, car: spec.id, x: r2(st.x), z: r2(st.z), y: r2(st.y - car.HCG), h: Math.round(st.h * 1000) / 1000, vx: r2(st.vx), vz: r2(st.vz), r: Math.round(st.r * 1000) / 1000 };
-  const l = net.last, still = l && Math.hypot(st.vx, st.vz) < 0.05 && Math.abs(l.x - p.x) < 0.02 && Math.abs(l.z - p.z) < 0.02 && l.n === p.n && l.car === p.car && l.c === p.c && l.d === p.d;
+  const pt = paintFor(spec.id), p = { id: myId, n: myName(), c: myCol(), d: pt.decal || '', dc: pt.dcolor ?? 0xffffff, dn: pt.num ?? 29, rm: pt.rim ?? -1, car: spec.id, x: r2(st.x), z: r2(st.z), y: r2(st.y - car.HCG), h: Math.round(st.h * 1000) / 1000, vx: r2(st.vx), vz: r2(st.vz), r: Math.round(st.r * 1000) / 1000 };
+  const l = net.last, still = l && Math.hypot(st.vx, st.vz) < 0.05 && Math.abs(l.x - p.x) < 0.02 && Math.abs(l.z - p.z) < 0.02 && l.n === p.n && l.car === p.car && l.c === p.c && l.d === p.d && l.rm === p.rm && l.dc === p.dc;
   net.sendT = still ? 1 : 1 / 8; net.last = p;
   net.ch.send({ type: 'broadcast', event: 's', payload: p }).catch(() => {});
 }
@@ -1617,6 +1622,7 @@ function showMenu(scr) {
   document.querySelectorAll('.scr').forEach(s => s.classList.toggle('on', s.id === scr));
   if (scr === 'scrMain') renderMain();
   if (scr === 'scrCar') renderCars();
+  if (scr === 'scrGarage') { renderPaint(); showroomCar(garCar); }
   if (scr === 'scrMap') renderMaps();
   if (scr === 'scrSettings') renderSettings();
   if (scr === 'scrLb') renderLbScreen();
@@ -1661,37 +1667,91 @@ function renderCars() {
     <tr><th>Top speed target · sim</th><td class="${chk(m.top_speed_mph, v.top_speed_mph, 0.03)}">${v.top_speed_mph} · ${m.top_speed_mph} mph</td></tr>
     <tr><th>60–0 mph target · sim</th><td class="${chk(m.braking_60_0_ft, v.braking_distance_60_0_ft, 0.03)}">${v.braking_distance_60_0_ft} · ${m.braking_60_0_ft} ft</td></tr>`;
   $('carShift').value = shiftFor(selCar);
-  renderPaint();
   showroomCar(selCar);
 }
-/* paint and decals, saved per car */
+/* garage: paint, decals and rims, saved per car */
 const PAINTS = [null, 0xd8432e, 0xff8a2b, 0xf2c230, 0x3ddc84, 0x1f8f5a, 0x25c6d9, 0x2f7de1, 0x1d2f6b, 0xb05ce6, 0xf26bb5, 0xf2f2f2, 0x8a8f94, 0x16181b];
+const DCOLS = [0xffffff, 0x16181b, 0xffb21f, 0xd8432e, 0x2f7de1, 0x3ddc84, 0xb05ce6, 0xf26bb5, 0x25c6d9];
+const RIMS = [[null, 'Chrome', 0xe2e5e8], [0x1c1e21, 'Black', 0x1c1e21], [0xd4a532, 'Gold', 0xd4a532], [0xf4f4f4, 'White', 0xf4f4f4], [0x8a8f94, 'Gunmetal', 0x8a8f94], ['paint', 'Body color', 0x888888]];
+let garCar = cfg.carId;
 function setPaint(patch) {
-  cfg.paint = cfg.paint || {}; cfg.paint[selCar] = Object.assign({}, cfg.paint[selCar], patch); save();
-  show.id = ''; showroomCar(selCar); renderPaint();
-  if (ready && spec && spec.id === selCar) { scene.remove(model.group); model = makeModelFor(spec); scene.add(model.group); if (net.ready) { net.sendT = 0; trackPresence(); } }
+  cfg.paint = cfg.paint || {}; cfg.paint[garCar] = Object.assign({}, cfg.paint[garCar], patch); save();
+  show.id = ''; showroomCar(garCar); renderPaint();
+  if (ready && spec && spec.id === garCar) { scene.remove(model.group); model = makeModelFor(spec); scene.add(model.group); if (net.ready) { net.sendT = 0; trackPresence(); } }
 }
 function renderPaint() {
-  const pt = paintFor(selCar), base = carById(selCar).visual.color;
+  const pt = paintFor(garCar), base = carById(garCar).visual.color, body = pt.color ?? base;
+  if (!$('gCar').options.length) $('gCar').innerHTML = VEH.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+  $('gCar').value = garCar;
   $('paintSw').innerHTML = PAINTS.map((c, i) => `<button type="button" class="sw${(pt.color ?? null) === c ? ' sel' : ''}" data-i="${i}" title="${c == null ? 'Factory color' : hex(c)}" aria-label="${c == null ? 'Factory color' : 'Paint ' + hex(c)}" style="background:${hex(c == null ? base : c)}">${c == null ? '<small style="font-size:9px;color:#fff;text-shadow:0 1px 2px #000">F</small>' : ''}</button>`).join('') +
-    `<input type="color" id="paintCustom" aria-label="Custom paint color" value="${hex(pt.color ?? base)}">`;
+    `<input type="color" id="paintCustom" aria-label="Custom paint color" title="Any color" value="${hex(body)}">`;
   $('paintSw').querySelectorAll('.sw').forEach(b => b.onclick = () => setPaint({ color: PAINTS[+b.dataset.i] }));
-  $('paintCustom').onchange = e => setPaint({ color: parseInt(e.target.value.slice(1), 16) });
-  if (!$('decalSel').options.length) $('decalSel').innerHTML = CARS.DECALS.map(([id, label]) => `<option value="${id}">${esc(label)}</option>`).join('');
-  $('decalSel').value = pt.decal || 'none';
-  $('decalCol').value = hex(pt.dcolor ?? 0xffffff);
-  $('decalNum').value = pt.num ?? 29;
-  $('decalNum').disabled = !['number', 'race'].includes(pt.decal);
+  $('paintCustom').oninput = e => setPaint({ color: parseInt(e.target.value.slice(1), 16) });
+  const cur = pt.decal || 'none';
+  $('decalSw').innerHTML = CARS.DECALS.map(([id, label]) => `<button type="button" class="${id === cur ? 'sel' : ''}" data-id="${id}">${esc(label)}</button>`).join('');
+  $('decalSw').querySelectorAll('button').forEach(b => b.onclick = () => setPaint({ decal: b.dataset.id }));
+  const dc = pt.dcolor ?? 0xffffff;
+  $('decalColSw').innerHTML = DCOLS.map(c => `<button type="button" class="sw${c === dc ? ' sel' : ''}" data-c="${c}" aria-label="Decal ${hex(c)}" style="background:${hex(c)}"></button>`).join('') + `<input type="color" id="decalCol" aria-label="Custom decal color" value="${hex(dc)}">`;
+  $('decalColSw').querySelectorAll('.sw').forEach(b => b.onclick = () => setPaint({ dcolor: +b.dataset.c }));
+  $('decalCol').oninput = e => setPaint({ dcolor: parseInt(e.target.value.slice(1), 16) });
+  $('decalNum').value = pt.num ?? 29; $('decalNum').disabled = !['number', 'race'].includes(cur);
+  const rimNow = pt.rimSel ?? null;
+  $('rimSw').innerHTML = RIMS.map(([v, label, sw], i) => `<button type="button" class="sw rim${rimNow === v ? ' sel' : ''}" data-i="${i}" style="background:${hex(v === 'paint' ? body : sw)};color:${(v === 0x1c1e21 || (v === 'paint' && body < 0x777777)) ? '#fff' : '#111'}">${label}</button>`).join('');
+  $('rimSw').querySelectorAll('.sw').forEach(b => b.onclick = () => { const [v] = RIMS[+b.dataset.i]; setPaint({ rimSel: v, rim: v === 'paint' ? body : v }); });
 }
-$('decalSel').onchange = e => setPaint({ decal: e.target.value });
-$('decalCol').onchange = e => setPaint({ dcolor: parseInt(e.target.value.slice(1), 16) });
+function openGarage(from) { garCar = curScr === 'scrCar' ? selCar : cfg.carId; goFrom(from, 'scrGarage'); }
+$('gCar').onchange = e => { garCar = e.target.value; show.id = ''; showroomCar(garCar); renderPaint(); };
 $('decalNum').onchange = e => setPaint({ num: clamp(Math.round(+e.target.value || 0), 0, 99) });
+$('gReset').onclick = () => { if (cfg.paint) delete cfg.paint[garCar]; save(); show.id = ''; showroomCar(garCar); renderPaint(); if (ready && spec && spec.id === garCar) { scene.remove(model.group); model = makeModelFor(spec); scene.add(model.group); } };
+$('gDone').onclick = () => showMenu(document.body.dataset.from === 'pause' && ready ? 'scrPause' : document.body.dataset.from === 'car' ? 'scrCar' : 'scrMain');
+$('mGarage').onclick = () => openGarage('main');
+$('pGarage').onclick = () => openGarage('pause');
+$('carGarage').onclick = () => { garCar = selCar; document.body.dataset.fromCar = '1'; goFrom('car', 'scrGarage'); };
 $('carShift').onchange = e => { cfg.shiftByCar = cfg.shiftByCar || {}; cfg.shiftByCar[selCar] = e.target.value; save(); };
 $('carOk').onclick = () => { cfg.carId = selCar; save(); if (ready) { setCar(selCar, true); loadGhost(); resetRun(); } showMenu(document.body.dataset.from === 'pause' && ready ? 'scrPause' : 'scrMain'); };
 
+/* ---------- community levels (built in editor.html, stored in the Supabase table `levels`) ---------- */
+const LVL = 'lvl:';
+function levelMapDef(row) {
+  const L = row.data || {}, arena = L.mode === 'arena', size = clamp(+L.size || 400, 100, 1500), th = WB.THEMES[L.theme] || WB.THEMES.grass, by = cleanName(row.author);
+  return { id: LVL + row.id, name: String(L.name || row.name || 'Untitled').slice(0, 40), community: true, vs: arena,
+    environment_type: (arena ? 'Community arena' : 'Community track') + (by ? ' · by ' + by : ''), dimensions: `${size * 2} × ${size * 2} m`, road_length_km: null,
+    road_surface_types: ['asphalt', th.surf], weather_presets: ['clear', 'fog', 'rain'], time_presets: ['noon', 'morning', 'dusk', 'night'], traffic_density: 0,
+    elevation_profile: { min_m: 0, max_m: 10, max_grade: 0.2, description: `Made in the level designer${by ? ' by ' + by : ''}. ${arena ? 'VS arena: weapons on.' : 'Race track.'}` },
+    road_width: {}, hazards: ['whatever the builders put there'], roadside_objects: [], spawn_points: [{ label: 'Start' }],
+    checkpoints: { every_km: 0.5, laps: clamp(Math.round(+L.laps || 3), 1, 20) }, mode: arena ? 'arena' : 'loop', generator: 'custom',
+    minimap_m: arena ? Math.min(260, size) : 420, speed_limit_ms: 0, gen: { seed: 7 }, sky: th.sky, level: L };
+}
+function addLevelMap(row) {
+  const d = levelMapDef(row), i = MAPS.findIndex(m => m.id === d.id);
+  if (i >= 0) MAPS[i] = d; else MAPS.push(d);
+  if (row.id !== 'local') try { localStorage.setItem('r29.lvlcache.' + row.id, JSON.stringify(row)); } catch (e) {}
+  return d;
+}
+async function fetchLevel(id) {
+  id = String(id).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16); if (!id) return null;
+  if (id === 'local') { try { const t = JSON.parse(localStorage.getItem('r29.level.test') || 'null'); return t ? { id: 'local', name: t.name, author: '', data: t } : null; } catch (e) { return null; } }
+  if (sb) try { const { data, error } = await sb.from('levels').select('id,name,author,data').eq('id', id).maybeSingle(); if (!error && data) return data; } catch (e) {}
+  try { return JSON.parse(localStorage.getItem('r29.lvlcache.' + id) || 'null'); } catch (e) { return null; }
+}
+let community = null;
+async function loadCommunity() {
+  community = [];
+  if (sb) try { const { data, error } = await sb.from('levels').select('id,name,author,mode,updated_at').order('updated_at', { ascending: false }).limit(40); if (!error && data) community = data; } catch (e) {}
+  if (curScr === 'scrMap') renderMaps();
+}
+async function pickCommunity(id) {
+  selMap = LVL + id; renderMaps();
+  if (!MAPS.find(m => m.id === selMap)) { const row = await fetchLevel(id); if (row) { addLevelMap(row); renderMaps(); } else toast('Could not load that level'); }
+}
 function renderMaps() {
-  $('mapCards').innerHTML = MAPS.map(m => `<button type="button" class="card${m.id === selMap ? ' sel' : ''}" data-id="${m.id}"><b>${esc(m.name)}</b><span>${esc(m.environment_type)}</span><span>${esc(m.dimensions)}</span></button>`).join('');
-  $('mapCards').querySelectorAll('.card').forEach(b => b.onclick = () => { selMap = b.dataset.id; renderMaps(); });
+  if (community === null) loadCommunity();
+  const builtIn = MAPS.filter(m => !m.community || m.id === LVL + 'local');
+  $('mapCards').innerHTML = builtIn.map(m => `<button type="button" class="card${m.id === selMap ? ' sel' : ''}" data-id="${m.id}"><b>${esc(m.name)}</b><span>${esc(m.environment_type)}</span><span>${esc(m.dimensions)}</span></button>`).join('');
+  $('mapCards').insertAdjacentHTML('beforeend', `<p class="cardsHead">Community levels · <a href="editor.html" target="_blank" rel="noopener">open the level designer</a></p>` +
+    ((community || []).length ? community.map(c => `<button type="button" class="card${LVL + c.id === selMap ? ' sel' : ''}" data-lvl="${esc(c.id)}"><b>${esc(c.name)}</b><span>${c.mode === 'arena' ? 'Arena · weapons' : 'Race track'}</span><span>${c.author ? 'by ' + esc(cleanName(c.author)) : 'Community'}</span></button>`).join('')
+      : `<p class="cardsHead note">${community === null ? 'Loading…' : 'None yet. Build one in the level designer.'}</p>`));
+  $('mapCards').querySelectorAll('.card').forEach(b => b.onclick = () => { if (b.dataset.lvl) pickCommunity(b.dataset.lvl); else { selMap = b.dataset.id; renderMaps(); } });
   const m = mapById(selMap);
   $('mapSub').textContent = m.elevation_profile.description;
   $('mapSpec').innerHTML = `
@@ -1709,6 +1769,7 @@ function renderMaps() {
   renderLb($('mapLb'), m.id, null);
 }
 $('mapGo').onclick = async () => {
+  if (!MAPS.find(x => x.id === selMap)) return toast('Still loading that level…');
   const m = mapById(selMap);
   cfg.mode = $('oMode').value; cfg.weather[m.id] = $('oWeather').value; cfg.time[m.id] = $('oTime').value;
   if (!$('oTraffic').disabled) cfg.traffic = $('oTraffic').value; cfg.laps = +$('oLaps').value; save();
@@ -1787,7 +1848,7 @@ function update(dt) {
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000); last = t;
   const inMenu = document.body.classList.contains('inmenu');
-  const showroom = inMenu && (!ready || curScr === 'scrCar' || curScr === 'scrMain' && !ready);
+  const showroom = inMenu && (!ready || curScr === 'scrCar' || curScr === 'scrGarage' || curScr === 'scrMain' && !ready);
   if (showroom) {
     if (!show.model) showroomCar(cfg.carId);
     const a = t / 1000 * 0.25, w = innerWidth, h = innerHeight;
@@ -1809,6 +1870,13 @@ function frame(t) {
 }
 showMenu('scrMain');
 requestAnimationFrame(frame);
+// ?level=<id> (shared link or the designer's Test drive) jumps straight into a community level
+(async () => {
+  const q = new URLSearchParams(location.search).get('level'), want = q || savedLvl; if (!want) return;
+  const row = await fetchLevel(want); if (!row) { if (q) toast('Level not found', 3); return; }
+  const d = addLevelMap(row); cfg.mapId = d.id; selMap = d.id; if (curScr === 'scrMain') renderMain();
+  if (q) { await loadMap(d.id); hideMenu(); toast(`${d.name}${row.id === 'local' ? ' · test drive' : ''}`, 2.5); }
+})();
 
 /* ---------- QA hook (automated tests) ---------- */
 window.__qa = {

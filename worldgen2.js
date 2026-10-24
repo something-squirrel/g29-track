@@ -896,12 +896,122 @@ function genArena(W, map) {
   W.outOfBounds = () => false;
 }
 
+/* =================== Community levels (made in editor.html) ===================
+ * level: { name, mode: 'race'|'arena', theme, laps, roadWidth, size, border, road: [[x,z],...], objects: [{ type, x, z, rot, ... }] }
+ * rot is the heading in degrees (0 = north/-z, 90 = east/+x). Ramps, tabletops, containers and buildings snap to 90°. */
+const THEMES = {
+  grass:    { ground: '#4f7f33', dots: ['#46732c', '#5e8f40', '#4a7930'], surf: 'grass', tree: 0x2f6b2f, sky: [[150, 170, 190], [106, 128, 140], [70, 96, 86]] },
+  desert:   { ground: '#c89a62', dots: ['#b98b55', '#d4a86f', '#bf9159'], surf: 'sand', tree: 0x6f8a3a, sky: [[196, 160, 128], [170, 120, 90], [140, 100, 76]] },
+  snow:     { ground: '#e3e8ec', dots: ['#d6dde2', '#eef2f4', '#cfd7dc'], surf: 'grass', tree: 0x2b4f3a, sky: [[200, 210, 220], [170, 182, 194], [150, 160, 170]] },
+  concrete: { ground: '#9a9c98', dots: ['#8f918d', '#a6a8a4', '#939591'], surf: 'concrete', tree: 0x356b31, sky: [[150, 160, 172], [120, 130, 140], [100, 110, 118]] },
+  beach:    { ground: '#dcc28e', dots: ['#cfb27c', '#e4cd9c', '#d2b884'], surf: 'sand', tree: 0x3f9a3a, sky: [[140, 196, 236], [110, 176, 226], [120, 170, 110]] },
+};
+function genCustom(W, map) {
+  const L = map.level || {}, T = THEMES[L.theme] || THEMES.grass, size = clamp(+L.size || 400, 100, 1500), rnd = W.rand;
+  const num = (v, d, a, b) => clamp(Number.isFinite(+v) ? +v : d, a, b);
+  W.flat = true; W.useHashWhenFlat = true; W.base = () => 0; W.offSurface = () => T.surf;
+  stdMats(W);
+  const gTex = Gn.speckle('lvl-' + (L.theme || 'grass'), T.ground, T.dots, 900, 3); gTex.repeat.set((size * 2 + 800) / 10, (size * 2 + 800) / 10);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(size * 2 + 800, size * 2 + 800), new THREE.MeshLambertMaterial({ map: gTex }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; W.group.add(ground);
+  // road
+  const pts = (Array.isArray(L.road) ? L.road : []).filter(p => Array.isArray(p) && Number.isFinite(+p[0]) && Number.isFinite(+p[1])).map(p => [clamp(+p[0], -size, size), clamp(+p[1], -size, size)]);
+  let r = null;
+  if (pts.length >= 3) {
+    const rw = num(L.roadWidth, 12, 6, 30);
+    r = W.mainRoad = W.addRoad(makeRoad('main', sampleSpline(pts, true, 2), { closed: true, width: rw, shoulder: 1.2, laneW: rw / 2, markings: 'circuit', shoulderSurface: 'curb' }), rw / 2 + 1.2 + 14);
+    W.shoulderSurface = q => Math.abs(r.k[q.i]) > 1 / 45 ? 'curb' : T.surf;
+    roadMesh(W, r); markings(W, r, 'circuit');
+  }
+  minimapFrom(W);
+  const mm = (ax, az, bx, bz, w) => W.minimapLines.push({ pts: new Float32Array([ax, az, bx, bz]), w, kind: 'road' });
+  // objects
+  const fwd = h => [Math.sin(h), -Math.cos(h)];
+  const snap90 = deg => ((Math.round(deg / 90) % 4) + 4) % 4; // 0 N, 1 E, 2 S, 3 W
+  const rampBox = (cx, cz, q, len, wid, ya, yb, open) => { // a ramp rising from ya to yb in the direction q (0..3)
+    const hl = len / 2, hw = wid / 2;
+    if (q === 0) addRamp(W, { axis: 'z', x0: cx - hw, x1: cx + hw, z0: cz - hl, z1: cz + hl, ya: yb, yb: ya, open: open.map(o => ({ start: 'z1', end: 'z0' })[o]) });
+    if (q === 2) addRamp(W, { axis: 'z', x0: cx - hw, x1: cx + hw, z0: cz - hl, z1: cz + hl, ya, yb, open: open.map(o => ({ start: 'z0', end: 'z1' })[o]) });
+    if (q === 1) addRamp(W, { axis: 'x', x0: cx - hl, x1: cx + hl, z0: cz - hw, z1: cz + hw, ya, yb, open: open.map(o => ({ start: 'x0', end: 'x1' })[o]) });
+    if (q === 3) addRamp(W, { axis: 'x', x0: cx - hl, x1: cx + hl, z0: cz - hw, z1: cz + hw, ya: yb, yb: ya, open: open.map(o => ({ start: 'x1', end: 'x0' })[o]) });
+    if (ya === yb) W.decks[W.decks.length - 1].axis = null;
+  };
+  const conCols = [0xb8432e, 0x2e6fb8, 0x3f8a4a, 0xd9a21f, 0x7a4fa8, 0xd0d4d8, 0xc96a2a], bldCols = [0xa9adb1, 0x8f9aa3, 0xc2b8a8, 0x7d8a96, 0xb4a48e];
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x8a9096 }), pillarMat = new THREE.MeshLambertMaterial({ color: 0x8c9196 });
+  const trees = [], rocks = [], spawns = [], itemSpots = [];
+  const objs = (Array.isArray(L.objects) ? L.objects : []).slice(0, 2000);
+  for (const o of objs) {
+    if (!o || typeof o.type !== 'string') continue;
+    const x = num(o.x, 0, -size, size), z = num(o.z, 0, -size, size), rotD = num(o.rot, 0, -3600, 3600), h = rotD * Math.PI / 180;
+    if (o.type === 'ramp') { const l = num(o.l, 8, 2, 60), w = num(o.w, 6, 2, 40), hh = num(o.h, 1.5, 0.3, 8); rampBox(x, z, snap90(rotD), l, w, 0, hh, []); }
+    else if (o.type === 'tabletop') {
+      const l = num(o.l, 50, 12, 150), w = num(o.w, 12, 4, 40), hh = num(o.h, 3, 0.5, 10), q = snap90(rotD), [fx, fz] = fwd(q * Math.PI / 2);
+      const up = l * 0.36, top = l * 0.28, dn = l - up - top;
+      const c = d => [x + fx * d, z + fz * d];
+      rampBox(...c(-l / 2 + up / 2), q, up, w, 0, hh, ['end']);
+      rampBox(...c(-l / 2 + up + top / 2), q, top, w, hh, hh, ['start', 'end']);
+      rampBox(...c(l / 2 - dn / 2), q, dn, w, hh, 0, ['start']);
+    }
+    else if (o.type === 'boost') addBoostPad(W, x, z, h, num(o.l, 8, 3, 30), num(o.w, 5, 2, 20));
+    else if (o.type === 'wall') {
+      const l = num(o.l, 20, 1, 400), hh = num(o.h, 2.5, 0.5, 20), [fx, fz] = fwd(h), rx = -fz, rz = fx;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1, hh, l), wallMat); m.position.set(x, hh / 2, z); m.rotation.y = -h; W.group.add(m);
+      for (const s2 of [-0.5, 0.5]) W.cols.seg(x - fx * l / 2 + rx * s2, z - fz * l / 2 + rz * s2, x + fx * l / 2 + rx * s2, z + fz * l / 2 + rz * s2, { kind: 'wall', y0: -1, y1: hh });
+      mm(x - fx * l / 2, z - fz * l / 2, x + fx * l / 2, z + fz * l / 2, 1.5);
+    }
+    else if (o.type === 'container') {
+      const q = snap90(rotD), hx = q % 2 ? 6.1 : 1.225, hz = q % 2 ? 1.225 : 6.1, lv = Math.round(num(o.stack, 1, 1, 3));
+      for (let k = 0; k < lv; k++) boxMesh(W, x - hx, z - hz, x + hx, z + hz, k * 2.6, k * 2.6 + 2.55, new THREE.MeshLambertMaterial({ color: conCols[Math.floor(rnd() * conCols.length)] }));
+      W.cols.box(x - hx, z - hz, x + hx, z + hz, { kind: 'building', y0: -1, y1: lv * 2.6 }); mm(x - hx, z, x + hx, z, hz * 2);
+    }
+    else if (o.type === 'building') {
+      const q = snap90(rotD), w0 = num(o.w, 20, 4, 200), l0 = num(o.l, 20, 4, 200), hh = num(o.h, 15, 2, 200), hx = (q % 2 ? l0 : w0) / 2, hz = (q % 2 ? w0 : l0) / 2;
+      boxMesh(W, x - hx, z - hz, x + hx, z + hz, 0, hh, new THREE.MeshLambertMaterial({ color: bldCols[Math.floor(rnd() * bldCols.length)] }));
+      W.cols.box(x - hx, z - hz, x + hx, z + hz, { kind: 'building', y0: -1, y1: hh }); mm(x - hx, z, x + hx, z, hz * 2);
+    }
+    else if (o.type === 'pillar') { const rr = num(o.r, 1.2, 0.3, 8), hh = num(o.h, 7, 1, 40), m = new THREE.Mesh(new THREE.CylinderGeometry(rr, rr, hh, 12), pillarMat); m.position.set(x, hh / 2, z); W.group.add(m); W.cols.circ(x, z, rr, { kind: 'pole', y0: -1, y1: hh }); }
+    else if (o.type === 'tree') { const s2 = num(o.s, 1, 0.4, 3); trees.push([x, 0, z, s2, rnd() * 6]); W.cols.circ(x, z, 0.45 * s2, { kind: 'pole', y0: -1, y1: 9 * s2 }); }
+    else if (o.type === 'rock') rocks.push([x, -0.3, z, num(o.s, 2, 0.5, 8), rnd() * 6, 1]);
+    else if (o.type === 'itembox') itemSpots.push({ x, z, y: 0 });
+    else if (o.type === 'spawn') spawns.push({ x, z, y: 0, h, label: o.label ? String(o.label).slice(0, 20) : 'Spawn ' + (spawns.length + 1) });
+  }
+  if (trees.length) pines(W, trees, T.tree);
+  if (rocks.length) boulders(W, rocks);
+  // border walls
+  if (L.border !== false) {
+    const B = size + 2;
+    for (const [ax, az, bx, bz] of [[-B, -B, B, -B], [B, -B, B, B], [B, B, -B, B], [-B, B, -B, -B]]) {
+      W.cols.seg(ax, az, bx, bz, { kind: 'wall' });
+      const len = Math.hypot(bx - ax, bz - az), m = new THREE.Mesh(new THREE.BoxGeometry(len + 2, 3, 1.5), new THREE.MeshLambertMaterial({ color: 0xc23b2e }));
+      m.position.set((ax + bx) / 2, 1.5, (az + bz) / 2); m.rotation.y = -Math.atan2(bz - az, bx - ax); W.group.add(m); mm(ax, az, bx, bz, 2);
+    }
+  }
+  // race setup, spawns, items, bot waypoints
+  const race = L.mode !== 'arena' && r;
+  if (race) {
+    routeCheckpoints(W, r, Math.max(120, r.len / 6), true, Math.round(num(L.laps, 3, 1, 20)));
+    W.grid = Array.from({ length: 12 }, (_, k) => spawnOn(r, r.len - 20 - k * 8, (k % 2 ? -1 : 1) * Math.min(3.5, r.width / 4), 'Grid ' + (k + 1)));
+    W.spawns = [Object.assign({}, W.grid[0], { label: 'Start line' })].concat(spawns);
+    startGantry(W, r, 0, 'START');
+  } else {
+    W.checkpoints = []; W.laps = 1;
+    const def = [[-1, -1], [1, 1], [1, -1], [-1, 1]].map(([a, b], k) => { const x = a * size * 0.7, z = b * size * 0.7; return { x, z, y: 0, h: Math.atan2(-x, z), label: 'Corner ' + (k + 1) }; });
+    W.spawns = spawns.length ? spawns : def;
+    W.grid = W.spawns.slice(0, 12); while (W.grid.length < 12) W.grid.push(W.spawns[W.grid.length % W.spawns.length]);
+  }
+  W.itemSpots = itemSpots;
+  const bp = [], step = Math.max(25, size / 8);
+  for (let x = -size + step / 2; x < size; x += step) for (let z = -size + step / 2; z < size; z += step) if (!W.cols.query(x, z, 5).length) bp.push([x, z]);
+  W.botPoints = bp;
+  W.outOfBounds = (x, z) => Math.abs(x) > size + 200 || Math.abs(z) > size + 200;
+}
+
 /* =================== build entry =================== */
 function build(map, opts) {
   const W = newWorld(map, opts);
-  ({ coast: Gn.genCoast, mountain: Gn.genMountain, circuit: genCircuit, testtrack: genTestTrack, desert: genDesert, city: genCity, oval: genOval, beach: genBeach, arena: genArena })[map.generator](W, map);
+  ({ coast: Gn.genCoast, mountain: Gn.genMountain, circuit: genCircuit, testtrack: genTestTrack, desert: genDesert, city: genCity, oval: genOval, beach: genBeach, arena: genArena, custom: genCustom })[map.generator](W, map);
   if (!W.minimapLines.length) minimapFrom(W);
   return W;
 }
-root.R29World = { build };
+root.R29World = { build, THEMES };
 })(typeof self !== 'undefined' ? self : this);

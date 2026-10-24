@@ -26,6 +26,8 @@ function extrudeProfile(pts, L, H, W, bevel) {
 const DECALS = [
   ['none', 'None'], ['stripes', 'Racing stripes'], ['side', 'Side stripe'], ['number', 'Race number'],
   ['race', 'Stripes + number'], ['flames', 'Flames'], ['checker', 'Checkered'], ['split', 'Two-tone sides'],
+  ['bolt', 'Lightning bolt'], ['stars', 'Stars'], ['pinstripe', 'Pinstripes'], ['shark', 'Shark teeth'], ['fade', 'Fade'],
+  ['bolt-stripes', 'Bolt + stripes'],
 ];
 const css = c => '#' + ((c >>> 0) & 0xffffff).toString(16).padStart(6, '0');
 function drawSide(g, w, h, d) {
@@ -39,6 +41,24 @@ function drawSide(g, w, h, d) {
     const s = h * 0.075; for (let x = 0; x * s < w; x++) for (let y = 0; y < 2; y++) { g.fillStyle = (x + y) % 2 ? col : dark; g.fillRect(x * s, Y(0.42) + y * s, s, s); }
   }
   if (d.style === 'split') { g.fillStyle = col; g.fillRect(0, Y(0.48), w, h); }
+  if (d.style === 'bolt' || d.style === 'bolt-stripes') { // zig-zag lightning down the flank, nose to tail
+    g.fillStyle = col; g.beginPath();
+    const P = [[0.95, 0.58], [0.62, 0.52], [0.66, 0.44], [0.3, 0.5], [0.34, 0.41], [0.04, 0.46], [0.36, 0.35], [0.32, 0.43], [0.68, 0.36], [0.64, 0.45]];
+    P.forEach(([u, v], i) => i ? g.lineTo(X(u), Y(v)) : g.moveTo(X(u), Y(v))); g.closePath(); g.fill();
+  }
+  if (d.style === 'stars') {
+    g.fillStyle = col;
+    const star = (cx, cy, r) => { g.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); } g.closePath(); g.fill(); };
+    [[0.2, 0.45, 0.09], [0.36, 0.38, 0.06], [0.5, 0.47, 0.11], [0.66, 0.4, 0.07], [0.8, 0.46, 0.08]].forEach(([u, v, r]) => star(X(u), Y(v), r * h));
+  }
+  if (d.style === 'pinstripe') { g.fillStyle = col; for (const v of [0.58, 0.54, 0.34]) g.fillRect(0, Y(v), w, h * 0.012); }
+  if (d.style === 'shark') { // white teeth along the front of the flank with a dark mouth line
+    g.fillStyle = dark; g.fillRect(X(0.82), Y(0.42), w, h * 0.12);
+    g.fillStyle = col;
+    for (let k = 0; k < 7; k++) { const u0 = 0.83 + k * 0.024; g.beginPath(); g.moveTo(X(u0), Y(0.42)); g.lineTo(X(u0 + 0.012), Y(0.36)); g.lineTo(X(u0 + 0.024), Y(0.42)); g.fill();
+      g.beginPath(); g.moveTo(X(u0 + 0.012), Y(0.3)); g.lineTo(X(u0 + 0.024), Y(0.355)); g.lineTo(X(u0 + 0.036), Y(0.3)); g.fill(); }
+  }
+  if (d.style === 'fade') { const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, col); gr.addColorStop(0.65, col + '00'); g.fillStyle = gr; g.fillRect(0, 0, w, h); }
   if (d.style === 'flames') {
     g.fillStyle = col;
     for (let k = 0; k < 6; k++) { // tongues of flame licking back from the nose
@@ -57,7 +77,7 @@ function drawSide(g, w, h, d) {
   }
 }
 function addDecals(grp, prof, L, H, W, d) {
-  const sideStyles = ['side', 'number', 'race', 'flames', 'checker', 'split'];
+  const sideStyles = ['side', 'number', 'race', 'flames', 'checker', 'split', 'bolt', 'stars', 'pinstripe', 'shark', 'fade', 'bolt-stripes'];
   if (sideStyles.includes(d.style)) {
     const c = document.createElement('canvas'); c.width = 1024; c.height = Math.round(1024 * H / L); drawSide(c.getContext('2d'), c.width, c.height, d);
     const shape = new THREE.Shape();
@@ -71,7 +91,7 @@ function addDecals(grp, prof, L, H, W, d) {
       m.userData.decal = true; grp.add(m);
     }
   }
-  if (d.style === 'stripes' || d.style === 'race') {
+  if (d.style === 'stripes' || d.style === 'race' || d.style === 'bolt-stripes') {
     const pts = prof.body.map(([f, h]) => [(f - 0.5) * L, h * H]), pos = [];
     const lift = 0.07, lanes = [[-0.36, -0.12], [0.12, 0.36]].map(([a, b]) => [a * W / 1.85, b * W / 1.85]);
     for (let i = 0; i < pts.length - 1; i++) {
@@ -101,7 +121,7 @@ function makeCarModel(v, opts = {}) {
   const op = opts.ghost ? { transparent: true, opacity: 0.3 } : {};
   const tireMat = new THREE.MeshLambertMaterial(Object.assign({ color: 0x1c1c1c }, op));
   const wallMat = new THREE.MeshLambertMaterial(Object.assign({ color: 0x3a3a3a }, op));
-  const rimMat = new THREE.MeshPhongMaterial(Object.assign({ color: 0xe2e5e8, shininess: 110, specular: 0xffffff }, op));
+  const rimMat = new THREE.MeshPhongMaterial(Object.assign({ color: v.rim ?? 0xe2e5e8, shininess: 110, specular: 0xffffff }, op));
   const hubMat = new THREE.MeshPhongMaterial(Object.assign({ color: 0x2a2d30, shininess: 60 }, op));
   // big, visible wheels: wide tire, sidewall ring, bright 5-spoke rim; they sit partly outside the bodywork
   const TW2 = 0.38;

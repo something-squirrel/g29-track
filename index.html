@@ -79,6 +79,12 @@ body.inmenu .hud{opacity:0;pointer-events:none}
 .paint{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .paint button.sw{width:28px;height:28px;padding:0;border-radius:50%;border:2px solid rgba(255,255,255,.25);min-height:0}
 .paint button.sw.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.cardsHead{grid-column:1/-1;margin:10px 0 0;font-size:13px;color:var(--muted);letter-spacing:.06em}
+.cardsHead a{color:var(--accent)}
+.decals{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px;width:100%}
+.decals button{font-size:12px;padding:6px 4px;min-height:0}
+.decals button.sel{border-color:var(--accent);background:#2a2412;color:var(--accent)}
+.paint button.sw.rim{border-radius:6px;width:auto;padding:0 8px;font-size:11px;color:#111;font-weight:700}
 .paint input[type=color]{width:40px;height:30px;padding:0;border:0;background:none}
 #topRight{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px));display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:60%}
 #topRight button{background:var(--panel)}
@@ -146,7 +152,10 @@ body.inmenu #menu{display:block}
 #menu .sub{color:var(--muted);font-size:13px;margin:0 0 14px}
 .scr{display:none} .scr.on{display:block}
 .mbtns{display:flex;flex-direction:column;gap:8px;max-width:320px}
-.mbtns button{text-align:left;padding:10px 14px;font-size:17px;letter-spacing:.06em}
+.mbtns button,.mbtns .mlink{text-align:left;padding:10px 14px;font-size:17px;letter-spacing:.06em}
+.mbtns .mlink{display:block;background:#1b252c;border:1px solid var(--line);border-radius:4px;color:var(--fg);text-decoration:none}
+.mbtns .mlink:hover{border-color:var(--accent)}
+.mbtns .mlink small{display:block;font-size:12px;color:var(--muted);letter-spacing:.02em;margin-top:2px}
 .mbtns button small{display:block;font-size:12px;color:var(--muted);letter-spacing:.02em;margin-top:2px}
 .mbtns button.primary small{color:#3a2a00}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
@@ -292,8 +301,10 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
       <div class="mbtns">
         <button type="button" class="primary" id="mDrive">Drive<small id="mSummary">–</small></button>
         <button type="button" id="mCar">Choose car<small id="mCarName">–</small></button>
+        <button type="button" id="mGarage">Garage<small>Paint, decals and rims</small></button>
         <button type="button" id="mMap">Choose map<small id="mMapName">–</small></button>
         <button type="button" id="mLb">Leaderboards<small>Best times from everyone</small></button>
+        <a class="mlink" href="editor.html" target="_blank" rel="noopener">Level designer<small>Build tracks and arenas together</small></a>
         <button type="button" id="mSettings">Settings<small>Driver aids, camera, seat height</small></button>
         <button type="button" id="mWheel">Wheel setup<small>Axes, pedals and button binds</small></button>
       </div>
@@ -307,12 +318,23 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
       <div class="cards" id="carCards"></div>
       <table class="spec" id="carSpec"></table>
       <div class="opts"><label for="carShift">Gearbox</label><select id="carShift"><option value="auto">Automatic</option><option value="manual">Manual (paddles / arrow keys)</option></select>
-        <label>Paint</label><span class="paint" id="paintSw"></span>
-        <label for="decalSel">Decals</label><select id="decalSel"></select>
-        <label for="decalCol">Decal color</label><span class="paint"><input type="color" id="decalCol" value="#ffffff"><span class="note">Stripes, numbers, flames</span></span>
-        <label for="decalNum">Number</label><input type="number" id="decalNum" min="0" max="99" value="29" style="width:7ch">
       </div>
+      <p class="note">Paint and decals: <button type="button" id="carGarage">Open garage</button></p>
       <div class="foot"><button type="button" class="primary" id="carOk">Select car</button><button type="button" class="back">Back</button></div>
+    </section>
+
+    <section class="scr" id="scrGarage">
+      <h2>Garage</h2>
+      <p class="sub">Paint, decals and rims. Saved per car, and other drivers see your look online.</p>
+      <div class="opts">
+        <label for="gCar">Car</label><select id="gCar"></select>
+        <label>Paint</label><span class="paint" id="paintSw"></span>
+        <label>Decals</label><span class="decals" id="decalSw"></span>
+        <label for="decalCol">Decal color</label><span class="paint" id="decalColSw"></span>
+        <label for="decalNum">Number</label><input type="number" id="decalNum" min="0" max="99" value="29" style="width:7ch">
+        <label>Rims</label><span class="paint" id="rimSw"></span>
+      </div>
+      <div class="foot"><button type="button" class="primary" id="gDone">Done</button><button type="button" id="gReset">Back to factory look</button></div>
     </section>
 
     <section class="scr" id="scrMap">
@@ -368,6 +390,7 @@ ol.lb li b{font-family:var(--mono);font-weight:500}
         <button type="button" id="pReset">Reset to road<small>Nearest road position</small></button>
         <button type="button" id="pRepair">Repair car<small>Fixes damage (invalidates the lap)</small></button>
         <button type="button" id="pCar">Change car</button>
+        <button type="button" id="pGarage">Garage · paint &amp; decals</button>
         <button type="button" id="pMap">Change map</button>
         <button type="button" id="pSettings">Settings</button>
         <button type="button" id="pMain">Main menu</button>
